@@ -89,6 +89,55 @@ JSON output is available for pipeline integration:
 strataone inventory examples/azure-local-branch.yaml --json
 ```
 
+Run preflight readiness checks:
+
+```bash
+strataone preflight examples/azure-local-branch.yaml --skip-inventory
+```
+
+When BMC credentials are present, preflight automatically includes Redfish reachability and inventory checks:
+
+```bash
+strataone preflight examples/azure-local-branch.yaml --insecure
+```
+
+## Docker
+
+Run the API and dashboard locally:
+
+```bash
+docker compose up --build
+```
+
+Services:
+
+- Dashboard: http://localhost:3000
+- API: http://localhost:8080
+- API health: http://localhost:8080/health
+
+The Compose stack currently runs:
+
+- `strataone-api`: FastAPI service for validation, planning, and preflight
+- `strataone-dashboard`: static operational dashboard served by Nginx
+
+## API
+
+Start the API directly:
+
+```bash
+uvicorn strataone.api:app --reload --port 8080
+```
+
+Endpoints:
+
+```text
+GET  /health
+GET  /sites/example
+POST /sites/validate
+POST /sites/plan
+POST /sites/preflight
+```
+
 Run tests:
 
 ```bash
@@ -134,6 +183,10 @@ This repository currently contains the first buildable foundation:
 - YAML loader
 - Dry-run orchestration plan
 - Read-only Redfish inventory collection
+- Preflight readiness checks
+- FastAPI service
+- Docker Compose stack
+- Static dashboard shell
 - Hardware provider contract
 - Platform provider contract
 - Generic Redfish hardware provider
@@ -141,4 +194,4 @@ This repository currently contains the first buildable foundation:
 - Example Azure Local branch configuration
 - Unit tests
 
-The next implementation milestone is to add real provider execution with safe dry-run defaults, starting with Redfish inventory discovery and Azure Local ARM/Bicep deployment generation.
+The next implementation milestone is to add persistent site/job storage, async workers, and Azure Local ARM/Bicep deployment artifact generation.

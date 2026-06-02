@@ -1,0 +1,19 @@
+services:
+  strataone-api:
+    build:
+      context: .
+    image: strataone-api:dev
+    ports:
+      - "8080:8080"
+    environment:
+      STRATAONE_BMC_USERNAME: ${STRATAONE_BMC_USERNAME:-}
+      STRATAONE_BMC_PASSWORD: ${STRATAONE_BMC_PASSWORD:-}
+
+  strataone-dashboard:
+    image: nginx:1.27-alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+    depends_on:
+      - strataone-api
