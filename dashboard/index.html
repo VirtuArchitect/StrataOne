@@ -13,54 +13,46 @@
           <div class="brand-mark">S1</div>
           <div>
             <strong>StrataOne</strong>
-            <span>Orchestrator</span>
+            <span>Infrastructure Orchestrator</span>
           </div>
         </div>
         <nav>
           <a class="active" href="#overview">Overview</a>
           <a href="#sites">Sites</a>
-          <a href="#inventory">Inventory</a>
-          <a href="#preflight">Preflight</a>
-          <a href="#deployments">Deployments</a>
+          <a href="#jobs">Jobs</a>
           <a href="#providers">Providers</a>
+          <a href="#artifacts">Artifacts</a>
           <a href="#lifecycle">Lifecycle</a>
-          <a href="#settings">Settings</a>
         </nav>
       </aside>
 
       <main>
         <header class="topbar">
           <div>
-            <h1>Fleet Overview</h1>
-            <p>Vendor-agnostic zero-touch orchestration for distributed infrastructure.</p>
+            <h1>Operations Console</h1>
+            <p>Zero-touch orchestration across hardware vendors and virtualization platforms.</p>
           </div>
-          <div class="status-pill" id="apiStatus">API: checking</div>
+          <div class="topbar-actions">
+            <div class="status-pill" id="apiStatus">API: checking</div>
+            <button id="refreshAll">Refresh</button>
+          </div>
         </header>
 
         <section class="metric-grid">
-          <div class="metric">
-            <span>Sites</span>
-            <strong id="siteCount">1</strong>
-          </div>
-          <div class="metric">
-            <span>Ready</span>
-            <strong id="readyCount">-</strong>
-          </div>
-          <div class="metric">
-            <span>Warnings</span>
-            <strong id="warnCount">-</strong>
-          </div>
-          <div class="metric">
-            <span>Failures</span>
-            <strong id="failCount">-</strong>
-          </div>
+          <div class="metric"><span>Sites</span><strong id="siteCount">0</strong></div>
+          <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
+          <div class="metric"><span>Successful</span><strong id="successCount">0</strong></div>
+          <div class="metric"><span>Attention</span><strong id="attentionCount">0</strong></div>
         </section>
 
-        <section class="workbench">
-          <div class="panel site-panel">
+        <section class="layout-grid">
+          <div class="panel span-7">
             <div class="panel-header">
-              <h2>Sites</h2>
-              <button id="loadExample">Load Example</button>
+              <div>
+                <h2>Site Registry</h2>
+                <span>Persistent desired-state inventory</span>
+              </div>
+              <button id="saveSite">Save Site</button>
             </div>
             <table>
               <thead>
@@ -69,36 +61,69 @@
                   <th>Platform</th>
                   <th>Hardware</th>
                   <th>Nodes</th>
-                  <th>State</th>
+                  <th>Updated</th>
                 </tr>
               </thead>
-              <tbody id="sitesTable">
-                <tr>
-                  <td colspan="5">Loading site data...</td>
-                </tr>
-              </tbody>
+              <tbody id="sitesTable"></tbody>
             </table>
           </div>
 
-          <div class="panel actions-panel">
+          <div class="panel span-5">
             <div class="panel-header">
-              <h2>Actions</h2>
+              <div>
+                <h2>Selected Site</h2>
+                <span id="selectedSiteLabel">none</span>
+              </div>
             </div>
-            <div class="button-row">
-              <button id="validateSite">Validate</button>
-              <button id="planSite">Plan</button>
-              <button id="preflightSite">Preflight</button>
+            <div class="action-grid">
+              <button data-job="validate">Validate</button>
+              <button data-job="plan">Plan</button>
+              <button data-job="preflight">Preflight</button>
+              <button data-job="artifacts">Artifacts</button>
+            </div>
+            <dl class="detail-list" id="siteDetails"></dl>
+          </div>
+
+          <div class="panel span-7">
+            <div class="panel-header">
+              <div>
+                <h2>Desired State</h2>
+                <span>YAML source for the selected site</span>
+              </div>
+              <button id="loadExample">Load Example</button>
             </div>
             <textarea id="siteYaml" spellcheck="false"></textarea>
           </div>
-        </section>
 
-        <section class="panel results-panel">
-          <div class="panel-header">
-            <h2>Result</h2>
-            <span id="lastAction">idle</span>
+          <div class="panel span-5">
+            <div class="panel-header">
+              <div>
+                <h2>Job History</h2>
+                <span>Tracked orchestration activity</span>
+              </div>
+            </div>
+            <div class="job-list" id="jobsList"></div>
           </div>
-          <pre id="resultOutput">{}</pre>
+
+          <div class="panel span-6">
+            <div class="panel-header">
+              <div>
+                <h2>Provider Catalog</h2>
+                <span>Built-in and discovered plugins</span>
+              </div>
+            </div>
+            <div class="provider-list" id="providerList"></div>
+          </div>
+
+          <div class="panel span-6">
+            <div class="panel-header">
+              <div>
+                <h2>Result Inspector</h2>
+                <span id="lastAction">idle</span>
+              </div>
+            </div>
+            <pre id="resultOutput">{}</pre>
+          </div>
         </section>
       </main>
     </div>

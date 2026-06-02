@@ -22,6 +22,7 @@ class NodeInventory(BaseModel):
     nics: list[InventoryItem] = Field(default_factory=list)
     storage: list[InventoryItem] = Field(default_factory=list)
     firmware: list[InventoryItem] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
     error: str | None = None
 
 

@@ -101,6 +101,18 @@ When BMC credentials are present, preflight automatically includes Redfish reach
 strataone preflight examples/azure-local-branch.yaml --insecure
 ```
 
+Generate Azure Local deployment artifacts:
+
+```bash
+strataone artifacts examples/azure-local-branch.yaml --output artifacts
+```
+
+List built-in and discovered providers:
+
+```bash
+strataone providers
+```
+
 ## Docker
 
 Run the API and dashboard locally:
@@ -120,6 +132,13 @@ The Compose stack currently runs:
 - `strataone-api`: FastAPI service for validation, planning, and preflight
 - `strataone-dashboard`: static operational dashboard served by Nginx
 
+Runtime state defaults to `.strataone/`:
+
+- `.strataone/strataone.db`
+- `.strataone/artifacts/`
+
+Set `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override those paths.
+
 ## API
 
 Start the API directly:
@@ -132,10 +151,19 @@ Endpoints:
 
 ```text
 GET  /health
+GET  /providers
 GET  /sites/example
+GET  /sites
+POST /sites
+GET  /sites/{site_name}
+DELETE /sites/{site_name}
 POST /sites/validate
 POST /sites/plan
 POST /sites/preflight
+POST /sites/{site_name}/jobs/{action}
+GET  /jobs
+GET  /jobs/{job_id}
+POST /sites/{site_name}/artifacts
 ```
 
 Run tests:
@@ -186,7 +214,12 @@ This repository currently contains the first buildable foundation:
 - Preflight readiness checks
 - FastAPI service
 - Docker Compose stack
-- Static dashboard shell
+- Persistent SQLite site registry
+- Background job execution
+- Azure Local deployment artifact generation
+- Redfish capability checks
+- Built-in and filesystem provider discovery
+- Enterprise dashboard shell
 - Hardware provider contract
 - Platform provider contract
 - Generic Redfish hardware provider
@@ -194,4 +227,4 @@ This repository currently contains the first buildable foundation:
 - Example Azure Local branch configuration
 - Unit tests
 
-The next implementation milestone is to add persistent site/job storage, async workers, and Azure Local ARM/Bicep deployment artifact generation.
+The next implementation milestone is to replace the in-process worker with Redis/NATS-backed distributed execution, add authentication, and implement provider-specific Azure Local execution steps behind explicit approval gates.

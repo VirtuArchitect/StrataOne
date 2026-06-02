@@ -6,9 +6,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from strataone.artifacts import ArtifactGenerator
 from strataone.inventory import InventoryReport
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import CheckStatus, PreflightReport, PreflightRunner
+from strataone.providers.registry import list_providers
 from strataone.providers.hardware import get_hardware_provider
 from strataone.redfish import RedfishCredentials
 from strataone.state import SiteSpec, load_site_spec
@@ -101,6 +103,42 @@ def preflight(
 
     _print_preflight(report)
     raise typer.Exit(0 if report.ready else 1)
+
+
+@app.command()
+def artifacts(
+    site: Path = typer.Argument(..., help="Path to a StrataOne site YAML file."),
+    output: Path = typer.Option(Path("artifacts"), help="Artifact output directory."),
+    output_json: bool = typer.Option(False, "--json", help="Print artifact bundle as JSON."),
+) -> None:
+    """Generate deployment artifacts for a site."""
+    spec = load_site_spec(site)
+    bundle = ArtifactGenerator(output).generate(spec)
+    if output_json:
+        typer.echo(json.dumps(bundle.model_dump(), indent=2))
+        return
+    table = Table(title=f"Artifacts: {bundle.site_name}")
+    table.add_column("File")
+    for file in bundle.files:
+        table.add_row(file)
+    console.print(table)
+
+
+@app.command()
+def providers(output_json: bool = typer.Option(False, "--json", help="Print providers as JSON.")) -> None:
+    """List built-in and filesystem-discovered providers."""
+    provider_list = list_providers()
+    if output_json:
+        typer.echo(json.dumps([provider.model_dump() for provider in provider_list], indent=2))
+        return
+    table = Table(title="Providers")
+    table.add_column("Type")
+    table.add_column("Name")
+    table.add_column("Source")
+    table.add_column("Description")
+    for provider in provider_list:
+        table.add_row(provider.type, provider.name, provider.source, provider.description)
+    console.print(table)
 
 
 def _print_summary(spec: SiteSpec) -> None:

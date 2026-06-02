@@ -163,6 +163,15 @@ class PreflightRunner:
                         f"{len(node.firmware)} firmware item(s)" if node.firmware else "firmware inventory unavailable",
                     )
                 )
+                for capability in ("boot-override", "virtual-media", "firmware-inventory"):
+                    checks.append(
+                        self._check(
+                            "redfish",
+                            f"{node.serial}-{capability}",
+                            CheckStatus.PASS if capability in node.capabilities else CheckStatus.WARN,
+                            f"{capability} available" if capability in node.capabilities else f"{capability} not reported",
+                        )
+                    )
         return checks
 
     def _check(self, category: str, name: str, status: CheckStatus, message: str) -> PreflightCheck:

@@ -8,6 +8,8 @@ services:
     environment:
       STRATAONE_BMC_USERNAME: ${STRATAONE_BMC_USERNAME:-}
       STRATAONE_BMC_PASSWORD: ${STRATAONE_BMC_PASSWORD:-}
+    volumes:
+      - ./.strataone:/app/.strataone
 
   strataone-dashboard:
     image: nginx:1.27-alpine

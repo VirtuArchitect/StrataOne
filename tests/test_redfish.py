@@ -32,6 +32,7 @@ def test_collect_node_inventory_from_standard_redfish_endpoints() -> None:
                 "Model": "EdgeBox 2U",
                 "BiosVersion": "1.2.3",
                 "PowerState": "On",
+                "Boot": {"BootSourceOverrideEnabled": "Disabled"},
                 "ProcessorSummary": {"Count": 2},
                 "MemorySummary": {"TotalSystemMemoryGiB": 512},
                 "EthernetInterfaces": {"@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces"},
@@ -69,6 +70,7 @@ def test_collect_node_inventory_from_standard_redfish_endpoints() -> None:
                 "Name": "BMC",
                 "Model": "Redfish BMC",
                 "FirmwareVersion": "3.2.1",
+                "VirtualMedia": {"@odata.id": "/redfish/v1/Managers/1/VirtualMedia"},
             },
             "/redfish/v1/Chassis": {"Members": [{"@odata.id": "/redfish/v1/Chassis/1"}]},
             "/redfish/v1/Chassis/1": {"Id": "Chassis", "Name": "Main Chassis"},
@@ -99,3 +101,6 @@ def test_collect_node_inventory_from_standard_redfish_endpoints() -> None:
     assert len(inventory.nics) == 1
     assert len(inventory.storage) == 2
     assert len(inventory.firmware) == 1
+    assert "boot-override" in inventory.capabilities
+    assert "firmware-inventory" in inventory.capabilities
+    assert "virtual-media" in inventory.capabilities

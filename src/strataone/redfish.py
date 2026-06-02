@@ -49,6 +49,7 @@ class RedfishClient:
                 nics=self._inventory_from_links(node.bmc_ip, system, "EthernetInterfaces"),
                 storage=self._storage_inventory(node.bmc_ip, system),
                 firmware=self._firmware_inventory(node.bmc_ip, update_service, managers, chassis),
+                capabilities=self._capabilities(node.bmc_ip, system, managers, update_service),
             )
         except Exception as exc:
             return NodeInventory(
@@ -179,6 +180,25 @@ class RedfishClient:
                 )
             )
         return items
+
+    def _capabilities(
+        self,
+        bmc_ip: str,
+        system: dict[str, Any],
+        managers: list[dict[str, Any]],
+        update_service: dict[str, Any] | None,
+    ) -> list[str]:
+        capabilities = ["redfish-api"]
+        if system.get("Boot"):
+            capabilities.append("boot-override")
+        if update_service is not None:
+            capabilities.append("firmware-inventory")
+        for manager in managers:
+            virtual_media = manager.get("VirtualMedia", {}).get("@odata.id")
+            if virtual_media:
+                capabilities.append("virtual-media")
+                break
+        return sorted(set(capabilities))
 
     def _processor_count(self, system: dict[str, Any]) -> int | None:
         count = system.get("ProcessorSummary", {}).get("Count")
