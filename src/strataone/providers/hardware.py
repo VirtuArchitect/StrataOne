@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 
+from strataone.inventory import InventoryReport
 from strataone.plan import PlanStep
+from strataone.redfish import RedfishClient, RedfishCredentials
 from strataone.state import SiteSpec
 
 
@@ -10,6 +12,17 @@ class HardwareProvider(ABC):
     @abstractmethod
     def plan(self, spec: SiteSpec) -> list[PlanStep]:
         """Return dry-run actions required by this hardware provider."""
+
+    @abstractmethod
+    def inventory(
+        self,
+        spec: SiteSpec,
+        credentials: RedfishCredentials,
+        *,
+        timeout: float = 10,
+        verify_tls: bool = True,
+    ) -> InventoryReport:
+        """Collect hardware inventory for a site."""
 
 
 class GenericRedfishProvider(HardwareProvider):
@@ -23,6 +36,21 @@ class GenericRedfishProvider(HardwareProvider):
             PlanStep(phase="hardware", action="Mount provisioning media through virtual media", provider=self.name),
             PlanStep(phase="hardware", action="Reboot nodes into provisioning workflow", provider=self.name),
         ]
+
+    def inventory(
+        self,
+        spec: SiteSpec,
+        credentials: RedfishCredentials,
+        *,
+        timeout: float = 10,
+        verify_tls: bool = True,
+    ) -> InventoryReport:
+        client = RedfishClient(credentials, timeout=timeout, verify_tls=verify_tls)
+        return InventoryReport(
+            site_name=spec.site.name,
+            provider=self.name,
+            nodes=[client.collect_node_inventory(node) for node in spec.hardware.nodes],
+        )
 
 
 class OemHardwareProvider(GenericRedfishProvider):

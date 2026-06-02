@@ -1,10 +1,15 @@
+import json
+import os
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from strataone.inventory import InventoryReport
 from strataone.orchestrator import Orchestrator
+from strataone.providers.hardware import get_hardware_provider
+from strataone.redfish import RedfishCredentials
 from strataone.state import SiteSpec, load_site_spec
 
 app = typer.Typer(
@@ -41,6 +46,34 @@ def plan(site: Path = typer.Argument(..., help="Path to a StrataOne site YAML fi
     console.print(table)
 
 
+@app.command()
+def inventory(
+    site: Path = typer.Argument(..., help="Path to a StrataOne site YAML file."),
+    username_env: str = typer.Option(
+        "STRATAONE_BMC_USERNAME",
+        help="Environment variable containing the BMC username.",
+    ),
+    password_env: str = typer.Option(
+        "STRATAONE_BMC_PASSWORD",
+        help="Environment variable containing the BMC password.",
+    ),
+    timeout: float = typer.Option(10, help="Per-request timeout in seconds."),
+    insecure: bool = typer.Option(False, help="Disable TLS certificate verification for BMC HTTPS endpoints."),
+    output_json: bool = typer.Option(False, "--json", help="Print inventory as JSON."),
+) -> None:
+    """Collect read-only hardware inventory through the configured hardware provider."""
+    spec = load_site_spec(site)
+    credentials = _load_bmc_credentials(username_env, password_env)
+    provider = get_hardware_provider(spec.hardware.vendor)
+    report = provider.inventory(spec, credentials, timeout=timeout, verify_tls=not insecure)
+
+    if output_json:
+        typer.echo(json.dumps(report.model_dump(), indent=2))
+        return
+
+    _print_inventory(report)
+
+
 def _print_summary(spec: SiteSpec) -> None:
     table = Table(title="Site summary")
     table.add_column("Field")
@@ -52,3 +85,44 @@ def _print_summary(spec: SiteSpec) -> None:
     table.add_row("Nodes", str(len(spec.hardware.nodes)))
     table.add_row("Workloads", ", ".join(spec.workloads.enabled()) or "none")
     console.print(table)
+
+
+def _load_bmc_credentials(username_env: str, password_env: str) -> RedfishCredentials:
+    username = os.getenv(username_env)
+    password = os.getenv(password_env)
+    missing = [name for name, value in ((username_env, username), (password_env, password)) if not value]
+    if missing:
+        console.print(f"[red]missing credentials[/red] set {', '.join(missing)}")
+        raise typer.Exit(2)
+    return RedfishCredentials(username=username, password=password)
+
+
+def _print_inventory(report: InventoryReport) -> None:
+    table = Table(title=f"Hardware inventory: {report.site_name}")
+    table.add_column("Serial")
+    table.add_column("BMC")
+    table.add_column("Reachable")
+    table.add_column("Model")
+    table.add_column("BIOS")
+    table.add_column("CPU")
+    table.add_column("Memory")
+    table.add_column("NICs")
+    table.add_column("Storage")
+    table.add_column("Error")
+
+    for node in report.nodes:
+        table.add_row(
+            node.serial,
+            node.bmc_ip,
+            "yes" if node.reachable else "no",
+            " ".join(value for value in (node.manufacturer, node.model) if value) or "-",
+            node.bios_version or "-",
+            str(node.processor_count) if node.processor_count is not None else "-",
+            f"{node.memory_gib} GiB" if node.memory_gib is not None else "-",
+            str(len(node.nics)),
+            str(len(node.storage)),
+            node.error or "-",
+        )
+
+    console.print(table)
+    console.print(f"{report.reachable_count}/{len(report.nodes)} nodes reachable via {report.provider}")

@@ -67,6 +67,28 @@ Generate a dry-run deployment plan:
 strataone plan examples/azure-local-branch.yaml
 ```
 
+Collect read-only hardware inventory through Redfish:
+
+```bash
+export STRATAONE_BMC_USERNAME=admin
+export STRATAONE_BMC_PASSWORD='change-me'
+strataone inventory examples/azure-local-branch.yaml --insecure
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:STRATAONE_BMC_USERNAME = "admin"
+$env:STRATAONE_BMC_PASSWORD = "change-me"
+python -m strataone inventory examples\azure-local-branch.yaml --insecure
+```
+
+JSON output is available for pipeline integration:
+
+```bash
+strataone inventory examples/azure-local-branch.yaml --json
+```
+
 Run tests:
 
 ```bash
@@ -111,6 +133,7 @@ This repository currently contains the first buildable foundation:
 - Pydantic desired-state schema
 - YAML loader
 - Dry-run orchestration plan
+- Read-only Redfish inventory collection
 - Hardware provider contract
 - Platform provider contract
 - Generic Redfish hardware provider
