@@ -429,6 +429,21 @@
       </main>
     </div>
 
+    <div class="auth-modal" id="authModal" hidden>
+      <form class="auth-card" id="authLoginForm">
+        <div>
+          <h2>Sign In</h2>
+          <span>Use a StrataOne local user account.</span>
+        </div>
+        <label>Username<input id="loginUsername" autocomplete="username" value="admin" /></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" /></label>
+        <div class="button-row">
+          <button type="submit">Sign In</button>
+          <button class="secondary" type="button" id="cancelLogin">Cancel</button>
+        </div>
+      </form>
+    </div>
+
     <script src="./app.js?v=20260603-ops3"></script>
   </body>
 </html>

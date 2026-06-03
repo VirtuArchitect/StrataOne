@@ -58,6 +58,7 @@ class UserRecord(BaseModel):
     email: str
     roles: list[str]
     status: str = "active"
+    password_configured: bool = False
     created_at: str
     updated_at: str
 
@@ -171,13 +172,27 @@ class StrataStore:
                     email TEXT NOT NULL,
                     roles_json TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    password_hash TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
             if self.backend == "sqlite":
                 self._ensure_column(conn, "jobs", "params_json", "TEXT")
+                self._ensure_column(conn, "users", "password_hash", "TEXT")
+            if self.backend == "postgres":
+                conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
         self.seed_access_defaults()
 
     def upsert_site(self, spec: SiteSpec) -> SiteRecord:
@@ -450,23 +465,27 @@ class StrataStore:
             row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         return self._user_from_row(row) if row else None
 
-    def upsert_user(self, user: UserRecord) -> UserRecord:
+    def upsert_user(self, user: UserRecord, password_hash: str | None = None) -> UserRecord:
         now = _now()
         existing = self.get_user(user.username)
         created_at = existing.created_at if existing else user.created_at or now
         with self._connect() as conn:
+            if password_hash is None:
+                row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (user.username,)).fetchone()
+                password_hash = row["password_hash"] if row else None
             conn.execute(
                 """
-                INSERT INTO users (username, display_name, email, roles_json, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, display_name, email, roles_json, status, password_hash, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(username) DO UPDATE SET
                     display_name=excluded.display_name,
                     email=excluded.email,
                     roles_json=excluded.roles_json,
                     status=excluded.status,
+                    password_hash=excluded.password_hash,
                     updated_at=excluded.updated_at
                 """,
-                (user.username, user.display_name, user.email, json.dumps(user.roles), user.status, created_at, now),
+                (user.username, user.display_name, user.email, json.dumps(user.roles), user.status, password_hash, created_at, now),
             )
         return self.get_user(user.username)  # type: ignore[return-value]
 
@@ -474,6 +493,29 @@ class StrataStore:
         with self._connect() as conn:
             result = conn.execute("DELETE FROM users WHERE username = ?", (username,))
         return result.rowcount > 0
+
+    def get_user_password_hash(self, username: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()
+        return row["password_hash"] if row and row["password_hash"] else None
+
+    def create_session(self, token_hash: str, username: str, expires_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sessions (token_hash, username, created_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(token_hash) DO UPDATE SET
+                    username=excluded.username,
+                    expires_at=excluded.expires_at
+                """,
+                (token_hash, username, _now(), expires_at),
+            )
+
+    def get_session_user(self, token_hash: str, now: str) -> UserRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT username FROM sessions WHERE token_hash = ? AND expires_at > ?", (token_hash, now)).fetchone()
+        return self.get_user(row["username"]) if row else None
 
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
@@ -531,6 +573,7 @@ class StrataStore:
             email=row["email"],
             roles=json.loads(row["roles_json"]),
             status=row["status"],
+            password_configured=bool(row["password_hash"]) if "password_hash" in row.keys() else False,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

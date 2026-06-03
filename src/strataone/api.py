@@ -14,7 +14,7 @@ from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.queue import queue_backend
-from strataone.security import ALL_PERMISSIONS, auth_enabled, cors_origins, require_permission
+from strataone.security import ALL_PERMISSIONS, auth_enabled, cors_origins, create_password_hash, new_session_token, require_permission, session_expiry, token_hash, verify_password
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 from strataone.validation import validation_summary
@@ -48,6 +48,12 @@ class UserPayload(BaseModel):
     email: str
     roles: list[str] = []
     status: str = "active"
+    password: str | None = None
+
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
 
 
 class ProviderPayload(BaseModel):
@@ -63,6 +69,7 @@ jobs = JobRunner(store)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_admin_password()
     if os.getenv("STRATAONE_SEED_EXAMPLE", "true").lower() in {"1", "true", "yes"}:
         seed_example_site()
     yield
@@ -120,6 +127,24 @@ def root() -> dict[str, Any]:
     }
 
 
+@app.post("/auth/login")
+def login(payload: LoginPayload) -> dict[str, Any]:
+    user = store.get_user(payload.username.strip())
+    password_hash = store.get_user_password_hash(payload.username.strip())
+    if user is None or user.status != "active" or not verify_password(payload.password, password_hash):
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = new_session_token()
+    expires_at = session_expiry()
+    store.create_session(token_hash(token), user.username, expires_at)
+    return {
+        "token": token,
+        "username": user.username,
+        "display_name": user.display_name,
+        "roles": user.roles,
+        "expires_at": expires_at,
+    }
+
+
 @app.get("/sites/example")
 def example_site(_: Any = read_sites) -> dict[str, Any]:
     try:
@@ -136,6 +161,14 @@ def seed_example_site() -> None:
         store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
     except Exception:
         return
+
+
+def ensure_admin_password() -> None:
+    password = os.getenv("STRATAONE_ADMIN_PASSWORD")
+    admin = store.get_user("admin")
+    if not password or admin is None or store.get_user_password_hash("admin"):
+        return
+    store.upsert_user(admin, password_hash=create_password_hash(password))
 
 
 @app.get("/providers")
@@ -285,10 +318,12 @@ def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[
         email=payload.email.strip(),
         roles=payload.roles,
         status=payload.status,
+        password_configured=bool(payload.password),
         created_at="",
         updated_at="",
     )
-    return store.upsert_user(user).model_dump(mode="json")
+    password_hash = create_password_hash(payload.password) if payload.password else None
+    return store.upsert_user(user, password_hash=password_hash).model_dump(mode="json")
 
 
 @app.delete("/access/users/{username}")

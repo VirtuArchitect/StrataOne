@@ -192,6 +192,31 @@ main {
 }
 .topbar-actions { flex-wrap: wrap; }
 
+.auth-modal {
+  align-items: center;
+  background: rgba(3, 6, 18, 0.72);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 50;
+}
+
+.auth-modal[hidden] { display: none; }
+
+.auth-card {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 14px;
+  max-width: 420px;
+  padding: 20px;
+  width: min(420px, 100%);
+}
+
 h1, h2, p { margin: 0; }
 h1 { font-size: 20px; line-height: 1.15; }
 h2 { font-size: 16px; }
@@ -630,7 +655,26 @@ textarea {
 }
 
 .capability {
+  align-items: flex-start;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: flex-start;
+  min-height: 58px;
+  text-align: left;
+  white-space: normal;
+}
+
+.capability strong,
+.capability span {
+  display: block;
+  line-height: 1.25;
+}
+
+.capability span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .capability.active {

@@ -1,5 +1,10 @@
+import base64
+import hashlib
+import hmac
 import os
+import secrets
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Callable
 
 from fastapi import Header, HTTPException, status
@@ -72,11 +77,58 @@ def authenticate(authorization: str | None, store: StrataStore) -> AuthContext:
         return AuthContext(username="bootstrap", roles=["Platform Admin"], permissions={"*"})
     token_map = _configured_tokens()
     subject = token_map.get(token)
-    if subject is None:
+    if subject is not None:
+        username, roles = subject
+        permissions = _permissions_for_roles(roles, store)
+        return AuthContext(username=username, roles=roles, permissions=permissions)
+    session_user = store.get_session_user(token_hash(token), datetime.now(UTC).isoformat())
+    if session_user is None or session_user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
-    username, roles = subject
+    username, roles = session_user.username, session_user.roles
     permissions = _permissions_for_roles(roles, store)
     return AuthContext(username=username, roles=roles, permissions=permissions)
+
+
+def create_password_hash(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    iterations = 210_000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "$".join(
+        [
+            "pbkdf2_sha256",
+            str(iterations),
+            base64.urlsafe_b64encode(salt).decode("ascii"),
+            base64.urlsafe_b64encode(digest).decode("ascii"),
+        ]
+    )
+
+
+def verify_password(password: str, stored_hash: str | None) -> bool:
+    if not stored_hash:
+        return False
+    try:
+        algorithm, iterations_text, salt_text, digest_text = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_text.encode("ascii"))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations_text))
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def new_session_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def session_expiry(minutes: int | None = None) -> str:
+    ttl = minutes or int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60"))
+    return (datetime.now(UTC) + timedelta(minutes=ttl)).isoformat()
 
 
 def _bearer_token(authorization: str | None) -> str | None:

@@ -159,8 +159,11 @@ Protected API routes enforce bearer-token authentication when `STRATAONE_AUTH_EN
 ```env
 STRATAONE_AUTH_ENABLED=true
 STRATAONE_BOOTSTRAP_TOKEN=change-this-token
+STRATAONE_ADMIN_PASSWORD=change-this-password
 STRATAONE_API_TOKENS=operator-token=edge.operator:Viewer,Operator
 ```
+
+The dashboard signs in with local username/password sessions. The default Compose account is `admin` with `change-this-password`; override `STRATAONE_ADMIN_PASSWORD` before production use. Bootstrap/API tokens are still available for automation and emergency administration.
 
 Dashboard inventory jobs can use transient BMC credentials entered in the UI, but production deployments should resolve credentials through a secret provider. Supported providers are environment variables, a local JSON secret file, or a HashiCorp Vault-compatible endpoint:
 

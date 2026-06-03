@@ -118,15 +118,45 @@ def test_access_api_creates_roles_and_users() -> None:
             "email": "jane.smith@example.com",
             "roles": ["Change Manager"],
             "status": "active",
+            "password": "CorrectHorseBatteryStaple!",
         },
     )
     assert user_response.status_code == 200
     assert user_response.json()["roles"] == ["Change Manager"]
+    assert user_response.json()["password_configured"] is True
 
     settings_response = client.get("/settings")
     access = settings_response.json()["access"]
     assert any(role["name"] == "Change Manager" for role in access["roles"])
     assert any(user["username"] == "j.smith" for user in access["users"])
+
+
+def test_password_login_issues_session_token(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post(
+        "/access/roles",
+        json={"name": "Login Operator", "description": "Can read sites", "permissions": ["read-sites"]},
+    )
+    client.post(
+        "/access/users",
+        json={
+            "username": "login.user",
+            "display_name": "Login User",
+            "email": "login.user@example.com",
+            "roles": ["Login Operator"],
+            "status": "active",
+            "password": "StrataOneLogin123!",
+        },
+    )
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+
+    login_response = client.post("/auth/login", json={"username": "login.user", "password": "StrataOneLogin123!"})
+    token = login_response.json()["token"]
+    sites_response = client.get("/sites", headers={"Authorization": f"Bearer {token}"})
+
+    assert login_response.status_code == 200
+    assert login_response.json()["username"] == "login.user"
+    assert sites_response.status_code == 200
 
 
 def test_provider_api_creates_custom_provider() -> None:

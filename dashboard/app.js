@@ -61,6 +61,9 @@ const els = {
   bmcTimeout: document.querySelector("#bmcTimeout"),
   isoUrl: document.querySelector("#isoUrl"),
   isoBootOnce: document.querySelector("#isoBootOnce"),
+  authModal: document.querySelector("#authModal"),
+  loginUsername: document.querySelector("#loginUsername"),
+  loginPassword: document.querySelector("#loginPassword"),
 };
 
 const viewCopy = {
@@ -143,6 +146,7 @@ function wireEvents() {
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
   document.querySelector("#logoutButton").addEventListener("click", toggleAuthSession);
+  document.querySelector("#cancelLogin").addEventListener("click", hideAuthModal);
   document.querySelector("#addNode").addEventListener("click", addDeploymentNode);
   document.querySelector("#newProvider").addEventListener("click", () => showProviderForm());
   document.querySelector("#cancelProvider").addEventListener("click", hideProviderForm);
@@ -621,6 +625,7 @@ function renderSettingsSection(section, data) {
           <label>Username<input id="accessUsername" placeholder="j.smith" /></label>
           <label>Display Name<input id="accessDisplayName" placeholder="Jane Smith" /></label>
           <label>Email<input id="accessEmail" placeholder="jane.smith@example.com" /></label>
+          <label>Password<input id="accessPassword" type="password" autocomplete="new-password" placeholder="Set or rotate password" /></label>
           <label>Role
             <select id="accessRole">
               ${roleOptions(data.roles || [])}
@@ -783,6 +788,7 @@ async function handleDocumentActions(event) {
       document.querySelector("#accessUsername").value = user.username;
       document.querySelector("#accessDisplayName").value = user.display_name;
       document.querySelector("#accessEmail").value = user.email;
+      document.querySelector("#accessPassword").value = "";
       document.querySelector("#accessRole").value = (user.roles || [])[0] || "";
       document.querySelector("#accessStatus").value = user.status;
     }
@@ -828,15 +834,22 @@ async function handleDocumentSubmit(event) {
   }
   if (event.target.id === "userForm") {
     event.preventDefault();
-    const user = await apiPost("/access/users", {
+    const payload = {
       username: value("#accessUsername"),
       display_name: value("#accessDisplayName"),
       email: value("#accessEmail"),
       roles: value("#accessRole") ? [value("#accessRole")] : [],
       status: value("#accessStatus"),
-    });
+    };
+    if (value("#accessPassword")) payload.password = value("#accessPassword");
+    const user = await apiPost("/access/users", payload);
     writeResult("user saved", user);
     await loadSettings();
+    return;
+  }
+  if (event.target.id === "authLoginForm") {
+    event.preventDefault();
+    await loginWithPassword();
     return;
   }
   if (event.target.id === "settingsJsonForm") {
@@ -1175,8 +1188,7 @@ function writeSiteAction(message, status = "info") {
 
 function toggleAuthSession() {
   if (!state.authToken) {
-    if (!requestAuthToken()) return;
-    refreshAll();
+    showAuthModal();
     return;
   }
   logout();
@@ -1198,14 +1210,41 @@ function renderAuthState() {
 }
 
 function requestAuthToken() {
-  const token = window.prompt("Enter StrataOne API bearer token");
-  if (!token) return false;
-  state.authToken = token.trim();
-  state.authUser = "api user";
+  showAuthModal();
+  return false;
+}
+
+function showAuthModal() {
+  els.authModal.hidden = false;
+  els.loginPassword.value = "";
+  els.loginUsername.focus();
+}
+
+function hideAuthModal() {
+  els.authModal.hidden = true;
+}
+
+async function loginWithPassword() {
+  const response = await fetchWithTimeout(`${apiBase}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: els.loginUsername.value.trim(),
+      password: els.loginPassword.value,
+    }),
+  });
+  if (!response.ok) {
+    writeResult("login failed", { status: "invalid username or password" });
+    return;
+  }
+  const session = await response.json();
+  state.authToken = session.token;
+  state.authUser = session.display_name || session.username;
   localStorage.setItem("strataone.authToken", state.authToken);
   localStorage.setItem("strataone.authUser", state.authUser);
+  hideAuthModal();
   renderAuthState();
-  return true;
+  await refreshAll();
 }
 
 function renderAuthRequired() {
