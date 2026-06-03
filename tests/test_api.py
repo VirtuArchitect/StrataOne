@@ -58,6 +58,36 @@ def test_persistent_site_job_and_provider_endpoints() -> None:
     assert "job_id" in jobs_response.json()
 
 
+def test_site_validation_rejects_invalid_bmc_ip() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    site["hardware"]["nodes"][0]["bmc_ip"] = "not-an-ip"
+
+    response = client.post("/sites", json={"site": site})
+
+    assert response.status_code == 422
+    assert "bmc_ip" in response.json()["detail"]
+
+
+def test_mount_iso_job_requires_iso_contract() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+
+    response = client.post(
+        "/sites/branch-001/jobs/mount-iso",
+        json={
+            "username": "admin",
+            "password": "secret",
+            "iso_url": "https://repo.example.com/azure-local.iso",
+            "boot_once": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "job_id" in response.json()
+
+
 def test_settings_endpoint_returns_enterprise_sections() -> None:
     client = TestClient(app)
 

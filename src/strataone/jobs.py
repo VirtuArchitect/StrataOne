@@ -62,6 +62,8 @@ class JobRunner:
             return PreflightRunner().run(spec, report).model_dump(mode="json")
         if action == "artifacts":
             return ArtifactGenerator().generate(spec).model_dump(mode="json")
+        if action == "mount-iso":
+            return self._mount_iso(spec, params)
         raise ValueError(f"unsupported job action {action}")
 
     def _inventory(self, spec, params: dict[str, Any]):
@@ -79,3 +81,30 @@ class JobRunner:
             timeout=float(params.get("timeout") or os.getenv("STRATAONE_BMC_TIMEOUT", "10")),
             verify_tls=not bool(insecure),
         )
+
+    def _mount_iso(self, spec, params: dict[str, Any]) -> dict[str, Any]:
+        iso_url = params.get("iso_url")
+        if not iso_url:
+            raise ValueError("iso_url is required to mount virtual media")
+        username = params.get("username") or os.getenv("STRATAONE_BMC_USERNAME")
+        password = params.get("password") or os.getenv("STRATAONE_BMC_PASSWORD")
+        if not username or not password:
+            raise ValueError("BMC credentials are required for ISO mount jobs")
+        return {
+            "site_name": spec.site.name,
+            "action": "mount-iso",
+            "iso_url": str(iso_url),
+            "boot_once": bool(params.get("boot_once", True)),
+            "nodes": [
+                {
+                    "serial": node.serial,
+                    "bmc_ip": node.bmc_ip,
+                    "status": "planned",
+                    "provider": spec.hardware.vendor,
+                    "operation": "mount virtual media and set boot override",
+                }
+                for node in spec.hardware.nodes
+            ],
+            "execution_mode": "simulated-redfish-contract",
+            "note": "Provider-specific InsertMedia/BootSourceOverride execution should be enabled behind approval gates.",
+        }

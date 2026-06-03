@@ -506,6 +506,13 @@ textarea:focus {
   padding: 14px;
 }
 
+.iso-box {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
 .inline-controls {
   align-items: center;
   display: flex;

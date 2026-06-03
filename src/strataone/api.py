@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 
 from strataone.artifacts import ArtifactGenerator
 from strataone.inventory import InventoryReport
@@ -29,6 +29,8 @@ class JobPayload(BaseModel):
     password: str | None = None
     insecure: bool | None = None
     timeout: float | None = None
+    iso_url: HttpUrl | None = None
+    boot_once: bool | None = None
 
 
 class RolePayload(BaseModel):
@@ -58,7 +60,8 @@ jobs = JobRunner(store)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    seed_example_site()
+    if os.getenv("STRATAONE_SEED_EXAMPLE", "true").lower() in {"1", "true", "yes"}:
+        seed_example_site()
     yield
 
 
@@ -71,7 +74,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("STRATAONE_CORS_ORIGINS", "http://localhost:8088,http://127.0.0.1:8088").split(",") if origin.strip()],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -188,7 +191,7 @@ def settings() -> dict[str, Any]:
             "platform": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "platform"],
         },
         "api": {
-            "cors": "allow-all",
+            "cors": os.getenv("STRATAONE_CORS_ORIGINS", "http://localhost:8088,http://127.0.0.1:8088"),
             "docs": "/docs",
             "health": "/health",
             "session_timeout_minutes": int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60")),
@@ -292,7 +295,7 @@ def delete_site_record(site_name: str) -> dict[str, bool]:
 
 @app.post("/sites/{site_name}/jobs/{action}")
 def run_site_job(site_name: str, action: str, payload: JobPayload | None = None) -> dict[str, str]:
-    if action not in {"validate", "plan", "inventory", "preflight", "artifacts"}:
+    if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso"}:
         raise HTTPException(status_code=400, detail="unsupported action")
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")

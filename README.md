@@ -149,6 +149,7 @@ Runtime state defaults to `.strataone/`:
 - `.strataone/artifacts/`
 
 Set `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override those paths.
+Set `STRATAONE_CORS_ORIGINS` to the trusted dashboard/API origins allowed to call the API. Set `STRATAONE_SEED_EXAMPLE=false` for production-like environments so the example site is not inserted automatically.
 
 Dashboard inventory jobs can use transient BMC credentials entered in the UI. Those credentials are passed to the in-process job runner for that run and are not persisted in SQLite. You can also set defaults through environment variables:
 
@@ -196,7 +197,20 @@ plan
 inventory
 preflight
 artifacts
+mount-iso
 ```
+
+### Deployment Execution Model
+
+Current deployment is approval-oriented and staged:
+
+1. Generate desired state for a site.
+2. Run inventory and preflight checks.
+3. Generate deployment artifacts.
+4. Optionally run `mount-iso` to prepare Redfish virtual media boot.
+5. Hand off to provider-specific execution gates.
+
+The `mount-iso` job currently validates the ISO URL, BMC credential contract, target nodes, and boot-once intent, then records the per-node virtual-media operation as a simulated Redfish execution contract. Provider-specific `InsertMedia` and boot override calls should be enabled only after approval gates, audit logging, and lab validation are in place.
 
 Run tests:
 
@@ -262,3 +276,14 @@ This repository currently contains the first buildable foundation:
 - Unit tests
 
 The next implementation milestone is to replace the in-process worker with Redis/NATS-backed distributed execution, add authentication, and implement provider-specific Azure Local execution steps behind explicit approval gates.
+
+## Production Readiness Notes
+
+StrataOne is not production-safe yet. Known gaps include:
+
+- Authentication and enforced RBAC are still required.
+- SQLite is suitable for local/dev state, but multi-operator and distributed execution should move to PostgreSQL plus Redis/NATS or an equivalent queue.
+- CORS is configurable by environment and should be restricted to trusted dashboard origins.
+- BMC credentials should move to a vault-backed secret provider.
+- Redfish integration needs deeper mock-service and lab integration tests, especially for virtual media and boot override workflows.
+- Provider implementations beyond Azure Local planning are currently scaffolds unless explicitly implemented and validated.

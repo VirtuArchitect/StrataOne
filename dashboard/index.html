@@ -48,6 +48,7 @@
           <div class="topbar-actions">
             <div class="status-pill" id="apiStatus">API: checking</div>
             <div class="user-chip">j.goulden <span>admin</span></div>
+            <button class="secondary" id="logoutButton">Logout</button>
             <button id="newDeploymentTop">New Deployment</button>
             <button class="secondary" id="refreshAll">Refresh</button>
           </div>
@@ -278,6 +279,11 @@
                 <button data-job="artifacts">Artifacts</button>
               </div>
               <div class="action-status" id="siteActionStatus">No site action running</div>
+              <div class="iso-box">
+                <label>ISO URL<input id="isoUrl" placeholder="https://repo.example.com/azure-local.iso" /></label>
+                <label><input id="isoBootOnce" type="checkbox" checked /> Boot once from virtual media</label>
+                <button data-job="mount-iso">Mount ISO</button>
+              </div>
               <div class="credential-box">
                 <label>BMC Username<input id="bmcUsername" autocomplete="username" /></label>
                 <label>BMC Password<input id="bmcPassword" type="password" autocomplete="current-password" /></label>

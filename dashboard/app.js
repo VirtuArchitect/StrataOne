@@ -56,6 +56,8 @@ const els = {
   bmcPassword: document.querySelector("#bmcPassword"),
   bmcInsecure: document.querySelector("#bmcInsecure"),
   bmcTimeout: document.querySelector("#bmcTimeout"),
+  isoUrl: document.querySelector("#isoUrl"),
+  isoBootOnce: document.querySelector("#isoBootOnce"),
 };
 
 const viewCopy = {
@@ -136,6 +138,7 @@ function wireEvents() {
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
+  document.querySelector("#logoutButton").addEventListener("click", logout);
   document.querySelector("#addNode").addEventListener("click", addDeploymentNode);
   document.querySelector("#newProvider").addEventListener("click", () => showProviderForm());
   document.querySelector("#cancelProvider").addEventListener("click", hideProviderForm);
@@ -978,13 +981,21 @@ function exampleSpec() {
 }
 
 function jobPayload(action) {
-  if (action !== "inventory") return {};
-  return {
+  const credentials = {
     username: els.bmcUsername.value || null,
     password: els.bmcPassword.value || null,
     insecure: els.bmcInsecure.checked,
     timeout: Number(els.bmcTimeout.value || 10),
   };
+  if (action === "inventory") return credentials;
+  if (action === "mount-iso") {
+    return {
+      ...credentials,
+      iso_url: els.isoUrl.value || null,
+      boot_once: els.isoBootOnce.checked,
+    };
+  }
+  return {};
 }
 
 async function apiGet(path) {
@@ -1124,6 +1135,13 @@ function writeSiteAction(message, status = "info") {
   if (!els.siteActionStatus) return;
   els.siteActionStatus.textContent = message;
   els.siteActionStatus.className = `action-status ${status}`;
+}
+
+function logout() {
+  writeResult("logout", { status: "local session cleared", authentication: "not yet enforced" });
+  writeSiteAction("Local dashboard session cleared");
+  document.querySelector(".user-chip").textContent = "signed out";
+  document.querySelector("#logoutButton").disabled = true;
 }
 
 function value(selector) {

@@ -1,5 +1,7 @@
 from enum import StrEnum
+import ipaddress
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -20,6 +22,22 @@ class NodeSpec(BaseModel):
     serial: str
     bmc_ip: str
     role: str = "host"
+
+    @field_validator("serial")
+    @classmethod
+    def validate_serial(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", value):
+            raise ValueError("serial must be 1-64 characters and contain only letters, numbers, dot, underscore, colon, or dash")
+        return value
+
+    @field_validator("bmc_ip")
+    @classmethod
+    def validate_bmc_ip(cls, value: str) -> str:
+        try:
+            ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError("bmc_ip must be a valid IPv4 or IPv6 address") from exc
+        return value
 
 
 class SiteIdentity(BaseModel):
