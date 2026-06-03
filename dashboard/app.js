@@ -247,7 +247,15 @@ function selectChoice(type, value) {
 
 async function refreshAll() {
   await checkApi();
-  await Promise.all([loadSites(), loadJobs(), loadProviders(), loadSettings()]);
+  try {
+    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadSettings()]);
+  } catch (error) {
+    if (isAuthError(error)) {
+      renderAuthRequired();
+      return;
+    }
+    writeResult("refresh failed", { error: error.message });
+  }
 }
 
 async function checkApi() {
@@ -1009,6 +1017,7 @@ async function apiGet(path) {
 }
 
 async function apiPost(path, body) {
+  if (!state.authToken && !requestAuthToken()) throw new Error("authentication required");
   const response = await apiFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1019,23 +1028,14 @@ async function apiPost(path, body) {
 }
 
 async function apiDelete(path) {
+  if (!state.authToken && !requestAuthToken()) throw new Error("authentication required");
   const response = await apiFetch(path, { method: "DELETE" });
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
 
-async function apiFetch(path, options = {}, retry = true) {
+async function apiFetch(path, options = {}) {
   const response = await fetchWithTimeout(`${apiBase}${path}`, withAuth(options));
-  if (response.status === 401 && retry) {
-    const token = window.prompt("Enter StrataOne API bearer token");
-    if (!token) return response;
-    state.authToken = token.trim();
-    state.authUser = "api user";
-    localStorage.setItem("strataone.authToken", state.authToken);
-    localStorage.setItem("strataone.authUser", state.authUser);
-    renderAuthState();
-    return apiFetch(path, options, false);
-  }
   return response;
 }
 
@@ -1164,13 +1164,7 @@ function writeSiteAction(message, status = "info") {
 
 function toggleAuthSession() {
   if (!state.authToken) {
-    const token = window.prompt("Enter StrataOne API bearer token");
-    if (!token) return;
-    state.authToken = token.trim();
-    state.authUser = "api user";
-    localStorage.setItem("strataone.authToken", state.authToken);
-    localStorage.setItem("strataone.authUser", state.authUser);
-    renderAuthState();
+    if (!requestAuthToken()) return;
     refreshAll();
     return;
   }
@@ -1190,6 +1184,37 @@ function logout() {
 function renderAuthState() {
   els.userChip.innerHTML = `${escapeHtml(state.authToken ? state.authUser : "anonymous")} <span>${state.authToken ? "token" : "no token"}</span>`;
   document.querySelector("#logoutButton").textContent = state.authToken ? "Logout" : "Login";
+}
+
+function requestAuthToken() {
+  const token = window.prompt("Enter StrataOne API bearer token");
+  if (!token) return false;
+  state.authToken = token.trim();
+  state.authUser = "api user";
+  localStorage.setItem("strataone.authToken", state.authToken);
+  localStorage.setItem("strataone.authUser", state.authUser);
+  renderAuthState();
+  return true;
+}
+
+function renderAuthRequired() {
+  state.sites = [];
+  state.jobs = [];
+  state.providers = [];
+  state.inventory = null;
+  renderSites();
+  renderFleet();
+  renderJobs();
+  renderProviders();
+  renderMetrics();
+  writeResult("authentication required", {
+    status: "Sign in with an API token to load protected operational data.",
+    default_compose_token: "change-this-token",
+  });
+}
+
+function isAuthError(error) {
+  return String(error.message || "").includes("HTTP 401");
 }
 
 function value(selector) {
