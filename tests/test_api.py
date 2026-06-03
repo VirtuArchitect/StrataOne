@@ -99,6 +99,30 @@ def test_access_api_creates_roles_and_users() -> None:
     assert any(user["username"] == "j.smith" for user in access["users"])
 
 
+def test_provider_api_creates_custom_provider() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/providers",
+        json={
+            "name": "Acme Redfish",
+            "type": "hardware",
+            "description": "ACME supported Redfish provider",
+            "vendor_supported": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "acme-redfish"
+    assert payload["editable"] is True
+    assert payload["vendor_supported"] is True
+
+    providers = client.get("/providers").json()["providers"]
+    assert any(provider["name"] == "acme-redfish" for provider in providers)
+    assert client.delete("/providers/acme-redfish").json()["deleted"] is True
+
+
 def test_artifact_endpoint_generates_bundle() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()

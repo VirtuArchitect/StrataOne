@@ -351,6 +351,50 @@ tbody tr.selected { background: #27294f; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.span-form { grid-column: 1 / -1; }
+
+.node-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.section-toolbar {
+  align-items: center;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.section-toolbar strong,
+.section-toolbar span {
+  display: block;
+}
+
+.section-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.node-list {
+  display: grid;
+  gap: 10px;
+}
+
+.node-row {
+  align-items: end;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  padding: 12px;
+}
+
 label {
   color: var(--muted);
   display: grid;
@@ -444,6 +488,17 @@ textarea:focus {
   padding: 14px;
 }
 
+.action-status {
+  background: var(--panel-soft);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 10px 14px;
+}
+
+.action-status.ok { color: var(--ok); }
+.action-status.fail { color: var(--fail); }
+
 .credential-box {
   border-top: 1px solid var(--line);
   display: grid;
@@ -515,10 +570,29 @@ textarea {
 
 .job-item {
   cursor: pointer;
-  display: block;
   min-height: 0;
   width: 100%;
 }
+
+.provider-card,
+.job-item {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-main {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: block;
+  min-height: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.job-main:hover { background: transparent; }
 
 .job-item:hover,
 .fleet-card:hover { background: #25213b; }
@@ -541,6 +615,24 @@ textarea {
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 13px;
+}
+
+.lifecycle-detail {
+  background: var(--panel-soft);
+  border-top: 1px solid var(--line);
+}
+
+.capability {
+  cursor: pointer;
+}
+
+.capability.active {
+  border-color: var(--teal);
+  box-shadow: inset 4px 0 0 var(--teal);
+}
+
+.capability:hover {
+  background: #25213b;
 }
 
 .flow-list {
@@ -630,6 +722,11 @@ textarea {
   padding: 14px;
 }
 
+.provider-form {
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+
 .settings-form.wide textarea {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -690,6 +787,7 @@ pre {
   .settings-layout { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
   .rbac-grid { grid-template-columns: 1fr; }
+  .node-row { grid-template-columns: 1fr; }
   .readiness-banner { align-items: flex-start; flex-direction: column; gap: 14px; }
   .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: 1 / -1; }
 }

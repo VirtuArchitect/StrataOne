@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-enterprise1" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-ops3" />
   </head>
   <body>
     <div class="app-shell">
@@ -161,11 +161,15 @@
                   <button class="choice" data-hardware="supermicro-redfish"><strong>Supermicro</strong><span>Redfish-oriented platform</span></button>
                   <button class="choice" data-hardware="cisco-intersight"><strong>Cisco Intersight</strong><span>Intersight-oriented provider</span></button>
                 </div>
-                <div class="form-grid node-grid">
-                  <label>Node 1 Serial<input id="node1Serial" value="ABC123" /></label>
-                  <label>Node 1 BMC IP<input id="node1Bmc" value="10.10.1.11" /></label>
-                  <label>Node 2 Serial<input id="node2Serial" value="ABC124" /></label>
-                  <label>Node 2 BMC IP<input id="node2Bmc" value="10.10.1.12" /></label>
+                <div class="node-editor">
+                  <div class="section-toolbar">
+                    <div>
+                      <strong>Deployment Nodes</strong>
+                      <span>Add all hosts that will participate in the deployment.</span>
+                    </div>
+                    <button class="secondary" id="addNode">Add Node</button>
+                  </div>
+                  <div class="node-list" id="nodeList"></div>
                 </div>
               </div>
 
@@ -273,6 +277,7 @@
                 <button data-job="preflight">Preflight</button>
                 <button data-job="artifacts">Artifacts</button>
               </div>
+              <div class="action-status" id="siteActionStatus">No site action running</div>
               <div class="credential-box">
                 <label>BMC Username<input id="bmcUsername" autocomplete="username" /></label>
                 <label>BMC Password<input id="bmcPassword" type="password" autocomplete="current-password" /></label>
@@ -324,9 +329,28 @@
             <div class="panel-header">
               <div>
                 <h2>Provider Catalog</h2>
-                <span>Built-in and discovered hardware/platform providers</span>
+                <span>Built-in, vendor-supported, and custom provider plugins</span>
               </div>
+              <button id="newProvider">Add Provider</button>
             </div>
+            <form class="settings-form provider-form" id="providerForm" hidden>
+              <h3>Add / Edit Provider</h3>
+              <div class="form-grid">
+                <label>Name<input id="providerName" placeholder="acme-redfish" /></label>
+                <label>Type
+                  <select id="providerType">
+                    <option value="hardware">Hardware</option>
+                    <option value="platform">Platform</option>
+                  </select>
+                </label>
+                <label class="span-form">Description<input id="providerDescription" placeholder="ACME Redfish provider plugin" /></label>
+                <label><input id="providerSupported" type="checkbox" /> Vendor supported</label>
+              </div>
+              <div class="button-row">
+                <button type="submit">Save Provider</button>
+                <button class="secondary" type="button" id="cancelProvider">Cancel</button>
+              </div>
+            </form>
             <div class="provider-list" id="providerList"></div>
           </div>
         </section>
@@ -363,12 +387,8 @@
                 <span>Planned Day-2 operational controls</span>
               </div>
             </div>
-            <div class="lifecycle-grid">
-              <div class="capability"><strong>Firmware Compliance</strong><span>Uses Redfish/OEM inventory baselines.</span></div>
-              <div class="capability"><strong>Update Rings</strong><span>Prepares staged rollout workflows.</span></div>
-              <div class="capability"><strong>Drift Detection</strong><span>Compares latest state to desired state.</span></div>
-              <div class="capability"><strong>Node Replacement</strong><span>Guided rebuild flow for failed hosts.</span></div>
-            </div>
+            <div class="lifecycle-grid" id="lifecycleGrid"></div>
+            <div class="lifecycle-detail" id="lifecycleDetail"></div>
           </div>
         </section>
 
@@ -403,6 +423,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260603-enterprise1"></script>
+    <script src="./app.js?v=20260603-ops3"></script>
   </body>
 </html>

@@ -1,4 +1,6 @@
-const apiBase = window.STRATAONE_API_BASE || "http://127.0.0.1:8080";
+const apiBase = new URLSearchParams(window.location.search).get("api")
+  || window.STRATAONE_API_BASE
+  || "http://127.0.0.1:8080";
 
 const state = {
   sites: [],
@@ -11,6 +13,10 @@ const state = {
   selectedPlatform: "azure-local",
   activeView: "overview",
   activeStep: "intent",
+  deploymentNodes: [
+    { serial: "ABC123", bmc_ip: "10.10.1.11", role: "host" },
+    { serial: "ABC124", bmc_ip: "10.10.1.12", role: "host" },
+  ],
 };
 
 const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
@@ -25,6 +31,9 @@ const els = {
   jobsList: document.querySelector("#jobsList"),
   overviewJobs: document.querySelector("#overviewJobs"),
   providerList: document.querySelector("#providerList"),
+  nodeList: document.querySelector("#nodeList"),
+  lifecycleGrid: document.querySelector("#lifecycleGrid"),
+  lifecycleDetail: document.querySelector("#lifecycleDetail"),
   inventoryList: document.querySelector("#inventoryList"),
   inventorySummary: document.querySelector("#inventorySummary"),
   resultOutput: document.querySelector("#resultOutput"),
@@ -40,6 +49,7 @@ const els = {
   attentionCount: document.querySelector("#attentionCount"),
   selectedSiteLabel: document.querySelector("#selectedSiteLabel"),
   siteDetails: document.querySelector("#siteDetails"),
+  siteActionStatus: document.querySelector("#siteActionStatus"),
   fleetStrip: document.querySelector("#fleetStrip"),
   deploymentSummary: document.querySelector("#deploymentSummary"),
   bmcUsername: document.querySelector("#bmcUsername"),
@@ -70,10 +80,39 @@ const settingsCopy = {
   audit: ["Audit", "Audit and history-retention posture"],
 };
 
+const lifecycleItems = [
+  {
+    id: "firmware",
+    title: "Firmware Compliance",
+    summary: "Uses Redfish/OEM inventory baselines.",
+    actions: ["Collect latest firmware inventory", "Compare against provider baseline", "Create remediation plan"],
+  },
+  {
+    id: "updates",
+    title: "Update Rings",
+    summary: "Prepares staged rollout workflows.",
+    actions: ["Assign site to update ring", "Schedule maintenance window", "Run staged update precheck"],
+  },
+  {
+    id: "drift",
+    title: "Drift Detection",
+    summary: "Compares latest state to desired state.",
+    actions: ["Run drift scan", "Review configuration differences", "Open remediation run"],
+  },
+  {
+    id: "replacement",
+    title: "Node Replacement",
+    summary: "Guided rebuild flow for failed hosts.",
+    actions: ["Validate replacement node", "Drain workloads", "Rejoin cluster and restore baseline"],
+  },
+];
+
 const exampleYaml = toYaml(exampleSpec());
 els.siteYaml.value = exampleYaml;
 
 wireEvents();
+renderNodeEditor();
+renderLifecycle("firmware");
 renderDeploymentSummary(exampleSpec());
 refreshAll();
 setInterval(refreshJobs, 2500);
@@ -97,6 +136,9 @@ function wireEvents() {
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
+  document.querySelector("#addNode").addEventListener("click", addDeploymentNode);
+  document.querySelector("#newProvider").addEventListener("click", () => showProviderForm());
+  document.querySelector("#cancelProvider").addEventListener("click", hideProviderForm);
   document.querySelector("#previousStep").addEventListener("click", previousWizardStep);
   document.querySelector("#nextStep").addEventListener("click", nextWizardStep);
   document.querySelector("#newDeploymentTop").addEventListener("click", () => showView("deployments"));
@@ -301,10 +343,16 @@ function loadSelectedDeploymentIntoWizard() {
 
 async function runJob(action, siteName = state.selectedSite) {
   if (!siteName) return;
-  const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, jobPayload(action));
-  writeResult(`${action} queued`, created);
-  await loadJobs();
-  pollJob(created.job_id);
+  try {
+    const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, jobPayload(action));
+    writeResult(`${action} queued`, created);
+    writeSiteAction(`${action} queued for ${siteName}`);
+    await loadJobs();
+    pollJob(created.job_id);
+  } catch (error) {
+    writeResult(`${action} failed`, { error: error.message, site: siteName });
+    writeSiteAction(`${action} failed: ${error.message}`, "fail");
+  }
 }
 
 async function pollJob(jobId) {
@@ -313,6 +361,7 @@ async function pollJob(jobId) {
     writeResult(`${job.action} ${job.status}`, job.result || { error: job.error, status: job.status });
     await loadJobs();
     if (job.status === "succeeded" || job.status === "failed") {
+      writeSiteAction(`${job.action} ${job.status}`, job.status === "failed" ? "fail" : "ok");
       if (job.action === "inventory" && job.status === "succeeded") await loadInventory();
       if (job.action === "artifacts" && job.status === "succeeded") renderArtifactResult(job.result);
       return;
@@ -399,7 +448,8 @@ function renderJobs() {
   els.jobsList.innerHTML = items;
   els.overviewJobs.innerHTML = state.jobs.slice(0, 6).map(jobItem).join("") || items;
   document.querySelectorAll("[data-job-id]").forEach((item) => {
-    item.addEventListener("click", async () => {
+    item.addEventListener("click", async (event) => {
+      if (event.target.closest("button")) return;
       const job = await apiGet(`/jobs/${encodeURIComponent(item.dataset.jobId)}`);
       writeResult(`${job.action} ${job.status}`, job);
       if (job.action === "artifacts" && job.result) renderArtifactResult(job.result);
@@ -409,10 +459,13 @@ function renderJobs() {
 
 function jobItem(job) {
   return `
-    <button class="list-item job-item" data-job-id="${escapeHtml(job.id)}">
-      <strong>${escapeHtml(job.action)} <span class="status-${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></strong>
-      <span>${escapeHtml(job.site_name)} - ${formatDate(job.created_at)}</span>
-    </button>
+    <div class="list-item job-item" data-job-id="${escapeHtml(job.id)}">
+      <button class="job-main" data-open-job="${escapeHtml(job.id)}">
+        <strong>${escapeHtml(job.action)} <span class="status-${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></strong>
+        <span>${escapeHtml(job.site_name)} - ${formatDate(job.created_at)}</span>
+      </button>
+      <button class="mini secondary" data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
+    </div>
   `;
 }
 
@@ -448,12 +501,87 @@ function renderInventory() {
 
 function renderProviders() {
   els.providerList.innerHTML = state.providers.map((provider) => `
-    <div class="list-item">
-      <strong>${escapeHtml(provider.name)}</strong>
-      <span>${escapeHtml(provider.type)} - ${escapeHtml(provider.source)}</span>
-      <span>${escapeHtml(provider.description)}</span>
+    <div class="list-item provider-card">
+      <div>
+        <strong>${escapeHtml(provider.name)} <span class="badge">${provider.vendor_supported ? "vendor supported" : "community"}</span></strong>
+        <span>${escapeHtml(provider.type)} - ${escapeHtml(provider.source)}</span>
+        <span>${escapeHtml(provider.description)}</span>
+      </div>
+      <div class="row-actions">
+        <button class="mini secondary" data-edit-provider="${escapeHtml(provider.name)}">Edit</button>
+        ${provider.editable ? `<button class="mini danger" data-delete-provider="${escapeHtml(provider.name)}">Remove</button>` : `<button class="mini secondary" disabled>Built-in</button>`}
+      </div>
     </div>
   `).join("");
+}
+
+function renderNodeEditor() {
+  els.nodeList.innerHTML = state.deploymentNodes.map((node, index) => `
+    <div class="node-row" data-node-index="${index}">
+      <label>Serial<input data-node-field="serial" value="${escapeHtml(node.serial)}" /></label>
+      <label>BMC IP<input data-node-field="bmc_ip" value="${escapeHtml(node.bmc_ip)}" /></label>
+      <label>Role<input data-node-field="role" value="${escapeHtml(node.role || "host")}" /></label>
+      <button class="mini danger" data-remove-node="${index}" ${state.deploymentNodes.length === 1 ? "disabled" : ""}>Remove</button>
+    </div>
+  `).join("");
+}
+
+function syncDeploymentNodesFromEditor() {
+  state.deploymentNodes = [...document.querySelectorAll("[data-node-index]")].map((row) => ({
+    serial: row.querySelector('[data-node-field="serial"]').value.trim(),
+    bmc_ip: row.querySelector('[data-node-field="bmc_ip"]').value.trim(),
+    role: row.querySelector('[data-node-field="role"]').value.trim() || "host",
+  })).filter((node) => node.serial || node.bmc_ip);
+}
+
+function addDeploymentNode() {
+  syncDeploymentNodesFromEditor();
+  state.deploymentNodes.push({ serial: "", bmc_ip: "", role: "host" });
+  renderNodeEditor();
+}
+
+function removeDeploymentNode(index) {
+  syncDeploymentNodesFromEditor();
+  state.deploymentNodes.splice(index, 1);
+  if (!state.deploymentNodes.length) state.deploymentNodes.push({ serial: "", bmc_ip: "", role: "host" });
+  renderNodeEditor();
+}
+
+function showProviderForm(provider) {
+  document.querySelector("#providerForm").hidden = false;
+  setValue("#providerName", provider?.name || "");
+  setValue("#providerType", provider?.type || "hardware");
+  setValue("#providerDescription", provider?.description || "");
+  document.querySelector("#providerSupported").checked = Boolean(provider?.vendor_supported);
+  document.querySelector("#providerName").disabled = Boolean(provider && !provider.editable);
+  document.querySelector("#providerName").focus();
+}
+
+function hideProviderForm() {
+  document.querySelector("#providerForm").hidden = true;
+  document.querySelector("#providerName").disabled = false;
+}
+
+function renderLifecycle(activeId) {
+  const active = lifecycleItems.find((item) => item.id === activeId) || lifecycleItems[0];
+  els.lifecycleGrid.innerHTML = lifecycleItems.map((item) => `
+    <button class="capability ${item.id === active.id ? "active" : ""}" data-lifecycle="${escapeHtml(item.id)}">
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.summary)}</span>
+    </button>
+  `).join("");
+  els.lifecycleDetail.innerHTML = `
+    <div class="panel-header">
+      <div>
+        <h2>${escapeHtml(active.title)}</h2>
+        <span>${escapeHtml(active.summary)}</span>
+      </div>
+      <button data-lifecycle-run="${escapeHtml(active.id)}">Open Workflow</button>
+    </div>
+    <ol class="flow-list">
+      ${active.actions.map((action) => `<li><strong>${escapeHtml(action)}</strong><span>Ready for guided workflow implementation.</span></li>`).join("")}
+    </ol>
+  `;
 }
 
 function renderSettingsSection(section, data) {
@@ -555,6 +683,52 @@ function showSettingsEditor(section) {
 }
 
 async function handleDocumentActions(event) {
+  const openJob = event.target.closest("[data-open-job]");
+  if (openJob) {
+    const job = await apiGet(`/jobs/${encodeURIComponent(openJob.dataset.openJob)}`);
+    writeResult(`${job.action} ${job.status}`, job);
+    if (job.action === "artifacts" && job.result) renderArtifactResult(job.result);
+    return;
+  }
+  const rerunJob = event.target.closest("[data-rerun-job]");
+  if (rerunJob) {
+    const job = state.jobs.find((item) => item.id === rerunJob.dataset.rerunJob) || await apiGet(`/jobs/${encodeURIComponent(rerunJob.dataset.rerunJob)}`);
+    await runJob(job.action, job.site_name);
+    return;
+  }
+  const removeNode = event.target.closest("[data-remove-node]");
+  if (removeNode) {
+    removeDeploymentNode(Number(removeNode.dataset.removeNode));
+    return;
+  }
+  const lifecycle = event.target.closest("[data-lifecycle]");
+  if (lifecycle) {
+    renderLifecycle(lifecycle.dataset.lifecycle);
+    return;
+  }
+  const lifecycleRun = event.target.closest("[data-lifecycle-run]");
+  if (lifecycleRun) {
+    writeResult("lifecycle workflow opened", {
+      workflow: lifecycleRun.dataset.lifecycleRun,
+      site: state.selectedSite || "select a site",
+      status: "ready",
+    });
+    showView("jobs");
+    return;
+  }
+  const editProvider = event.target.closest("[data-edit-provider]");
+  if (editProvider) {
+    const provider = state.providers.find((item) => item.name === editProvider.dataset.editProvider);
+    if (provider) showProviderForm(provider);
+    return;
+  }
+  const deleteProvider = event.target.closest("[data-delete-provider]");
+  if (deleteProvider) {
+    await apiDelete(`/providers/${encodeURIComponent(deleteProvider.dataset.deleteProvider)}`);
+    await loadProviders();
+    await loadSettings();
+    return;
+  }
   const editSite = event.target.closest("[data-edit-site]");
   if (editSite) {
     state.selectedSite = editSite.dataset.editSite;
@@ -608,6 +782,20 @@ async function handleDocumentActions(event) {
 }
 
 async function handleDocumentSubmit(event) {
+  if (event.target.id === "providerForm") {
+    event.preventDefault();
+    const provider = await apiPost("/providers", {
+      name: value("#providerName"),
+      type: value("#providerType"),
+      description: value("#providerDescription"),
+      vendor_supported: document.querySelector("#providerSupported").checked,
+    });
+    writeResult("provider saved", provider);
+    hideProviderForm();
+    await loadProviders();
+    await loadSettings();
+    return;
+  }
   if (event.target.id === "roleForm") {
     event.preventDefault();
     const role = await apiPost("/access/roles", {
@@ -678,6 +866,7 @@ function renderMetrics() {
 }
 
 function deploymentSpecFromForm() {
+  syncDeploymentNodesFromEditor();
   return {
     site: {
       name: value("#deployName"),
@@ -686,10 +875,7 @@ function deploymentSpecFromForm() {
     },
     hardware: {
       vendor: state.selectedHardware,
-      nodes: [
-        { serial: value("#node1Serial"), bmc_ip: value("#node1Bmc"), role: "host" },
-        { serial: value("#node2Serial"), bmc_ip: value("#node2Bmc"), role: "host" },
-      ].filter((node) => node.serial && node.bmc_ip),
+      nodes: state.deploymentNodes.filter((node) => node.serial && node.bmc_ip),
     },
     network: {
       management_vlan: numberValue("#managementVlan"),
@@ -744,10 +930,13 @@ function hydrateDeploymentForm(spec) {
   setValue("#vmVlan", spec.network?.vm_vlan ?? "");
   setValue("#dnsServers", (spec.network?.dns_servers || []).join(","));
   setValue("#ntpServers", (spec.network?.ntp_servers || []).join(","));
-  setValue("#node1Serial", spec.hardware?.nodes?.[0]?.serial || "");
-  setValue("#node1Bmc", spec.hardware?.nodes?.[0]?.bmc_ip || "");
-  setValue("#node2Serial", spec.hardware?.nodes?.[1]?.serial || "");
-  setValue("#node2Bmc", spec.hardware?.nodes?.[1]?.bmc_ip || "");
+  state.deploymentNodes = (spec.hardware?.nodes || []).map((node) => ({
+    serial: node.serial || "",
+    bmc_ip: node.bmc_ip || "",
+    role: node.role || "host",
+  }));
+  if (!state.deploymentNodes.length) state.deploymentNodes = [{ serial: "", bmc_ip: "", role: "host" }];
+  renderNodeEditor();
   document.querySelector("#workloadAks").checked = Boolean(spec.workloads?.aks);
   document.querySelector("#workloadArcVms").checked = Boolean(spec.workloads?.arc_vms);
   document.querySelector("#workloadAvd").checked = Boolean(spec.workloads?.avd);
@@ -929,6 +1118,12 @@ function writeResult(label, payload) {
   els.lastAction.textContent = label;
   els.resultOutput.textContent = JSON.stringify(payload, null, 2);
   if (els.artifactOutput && label.includes("artifacts")) els.artifactOutput.textContent = JSON.stringify(payload, null, 2);
+}
+
+function writeSiteAction(message, status = "info") {
+  if (!els.siteActionStatus) return;
+  els.siteActionStatus.textContent = message;
+  els.siteActionStatus.className = `action-status ${status}`;
 }
 
 function value(selector) {

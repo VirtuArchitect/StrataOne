@@ -12,7 +12,7 @@ from strataone.inventory import InventoryReport
 from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
-from strataone.providers.registry import list_providers
+from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 
@@ -43,6 +43,13 @@ class UserPayload(BaseModel):
     email: str
     roles: list[str] = []
     status: str = "active"
+
+
+class ProviderPayload(BaseModel):
+    name: str
+    type: str
+    description: str
+    vendor_supported: bool = False
 
 
 store = StrataStore()
@@ -115,6 +122,35 @@ def seed_example_site() -> None:
 @app.get("/providers")
 def providers() -> dict[str, Any]:
     return {"providers": [provider.model_dump(mode="json") for provider in list_providers()]}
+
+
+@app.post("/providers")
+def create_or_update_provider(payload: ProviderPayload) -> dict[str, Any]:
+    if payload.type not in {"hardware", "platform"}:
+        raise HTTPException(status_code=422, detail="provider type must be hardware or platform")
+    name = payload.name.strip().lower().replace(" ", "-")
+    if not name:
+        raise HTTPException(status_code=422, detail="provider name is required")
+    built_in = [provider for provider in list_providers() if provider.name == name and not provider.editable]
+    if built_in:
+        raise HTTPException(status_code=409, detail="built-in providers cannot be modified")
+    provider = ProviderInfo(
+        name=name,
+        type=payload.type,
+        source="plugins",
+        description=payload.description.strip() or "Custom StrataOne provider",
+        vendor_supported=payload.vendor_supported,
+        editable=True,
+    )
+    return upsert_plugin_provider(provider).model_dump(mode="json")
+
+
+@app.delete("/providers/{provider_name}")
+def delete_provider(provider_name: str) -> dict[str, bool]:
+    built_in = [provider for provider in list_providers() if provider.name == provider_name and not provider.editable]
+    if built_in:
+        raise HTTPException(status_code=409, detail="built-in providers cannot be deleted")
+    return {"deleted": delete_plugin_provider(provider_name)}
 
 
 @app.get("/settings")
