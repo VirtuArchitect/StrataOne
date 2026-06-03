@@ -150,6 +150,15 @@ Runtime state defaults to `.strataone/`:
 
 Set `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override those paths.
 
+Dashboard inventory jobs can use transient BMC credentials entered in the UI. Those credentials are passed to the in-process job runner for that run and are not persisted in SQLite. You can also set defaults through environment variables:
+
+```env
+STRATAONE_BMC_USERNAME=admin
+STRATAONE_BMC_PASSWORD=change-me
+STRATAONE_BMC_INSECURE=true
+STRATAONE_BMC_TIMEOUT=10
+```
+
 ## API
 
 Start the API directly:
@@ -174,7 +183,19 @@ POST /sites/preflight
 POST /sites/{site_name}/jobs/{action}
 GET  /jobs
 GET  /jobs/{job_id}
+GET  /sites/{site_name}/inventory
+POST /sites/{site_name}/inventory
 POST /sites/{site_name}/artifacts
+```
+
+Supported job actions:
+
+```text
+validate
+plan
+inventory
+preflight
+artifacts
 ```
 
 Run tests:
@@ -227,6 +248,8 @@ This repository currently contains the first buildable foundation:
 - Docker Compose stack
 - Persistent SQLite site registry
 - Background job execution
+- Dashboard-driven Redfish inventory jobs
+- Stored inventory-backed preflight checks
 - Azure Local deployment artifact generation
 - Redfish capability checks
 - Built-in and filesystem provider discovery

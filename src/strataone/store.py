@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from strataone.inventory import InventoryReport
 from strataone.state import SiteSpec
 
 
@@ -31,6 +32,14 @@ class JobRecord(BaseModel):
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
+
+
+class InventoryRecord(BaseModel):
+    site_name: str
+    report: dict[str, Any]
+    reachable_nodes: int
+    total_nodes: int
+    collected_at: str
 
 
 class StrataStore:
@@ -71,6 +80,17 @@ class StrataStore:
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inventory (
+                    site_name TEXT PRIMARY KEY,
+                    report_json TEXT NOT NULL,
+                    reachable_nodes INTEGER NOT NULL,
+                    total_nodes INTEGER NOT NULL,
+                    collected_at TEXT NOT NULL
                 )
                 """
             )
@@ -163,6 +183,35 @@ class StrataStore:
                 rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
         return [self._job_from_row(row) for row in rows]
 
+    def save_inventory(self, report: InventoryReport) -> InventoryRecord:
+        now = _now()
+        payload = report.model_dump(mode="json")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inventory (site_name, report_json, reachable_nodes, total_nodes, collected_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(site_name) DO UPDATE SET
+                    report_json=excluded.report_json,
+                    reachable_nodes=excluded.reachable_nodes,
+                    total_nodes=excluded.total_nodes,
+                    collected_at=excluded.collected_at
+                """,
+                (
+                    report.site_name,
+                    json.dumps(payload),
+                    report.reachable_count,
+                    len(report.nodes),
+                    now,
+                ),
+            )
+        return self.get_inventory(report.site_name)  # type: ignore[return-value]
+
+    def get_inventory(self, site_name: str) -> InventoryRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM inventory WHERE site_name = ?", (site_name,)).fetchone()
+        return self._inventory_from_row(row) if row else None
+
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
             name=row["name"],
@@ -185,6 +234,15 @@ class StrataStore:
             created_at=row["created_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
+        )
+
+    def _inventory_from_row(self, row: sqlite3.Row) -> InventoryRecord:
+        return InventoryRecord(
+            site_name=row["site_name"],
+            report=json.loads(row["report_json"]),
+            reachable_nodes=row["reachable_nodes"],
+            total_nodes=row["total_nodes"],
+            collected_at=row["collected_at"],
         )
 
 

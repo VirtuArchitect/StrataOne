@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from strataone.artifacts import ArtifactGenerator
+from strataone.inventory import InventoryReport
 from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
@@ -16,6 +17,17 @@ from strataone.state import SiteSpec, load_site_spec
 
 class SitePayload(BaseModel):
     site: dict[str, Any]
+
+
+class InventoryPayload(BaseModel):
+    inventory: dict[str, Any]
+
+
+class JobPayload(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    insecure: bool | None = None
+    timeout: float | None = None
 
 
 store = StrataStore()
@@ -115,12 +127,13 @@ def delete_site_record(site_name: str) -> dict[str, bool]:
 
 
 @app.post("/sites/{site_name}/jobs/{action}")
-def run_site_job(site_name: str, action: str) -> dict[str, str]:
-    if action not in {"validate", "plan", "preflight", "artifacts"}:
+def run_site_job(site_name: str, action: str, payload: JobPayload | None = None) -> dict[str, str]:
+    if action not in {"validate", "plan", "inventory", "preflight", "artifacts"}:
         raise HTTPException(status_code=400, detail="unsupported action")
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")
-    return {"job_id": jobs.submit(site_name, action)}
+    params = payload.model_dump(exclude_none=True) if payload else {}
+    return {"job_id": jobs.submit(site_name, action, params)}
 
 
 @app.get("/jobs")
@@ -142,6 +155,24 @@ def generate_artifacts(site_name: str) -> dict[str, Any]:
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
     return ArtifactGenerator().generate(spec_from_record(site)).model_dump(mode="json")
+
+
+@app.get("/sites/{site_name}/inventory")
+def get_site_inventory(site_name: str) -> dict[str, Any]:
+    inventory = store.get_inventory(site_name)
+    if inventory is None:
+        raise HTTPException(status_code=404, detail="inventory not found")
+    return inventory.model_dump(mode="json")
+
+
+@app.post("/sites/{site_name}/inventory")
+def save_site_inventory(site_name: str, payload: InventoryPayload) -> dict[str, Any]:
+    if store.get_site(site_name) is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    report = InventoryReport.model_validate(payload.inventory)
+    if report.site_name != site_name:
+        raise HTTPException(status_code=422, detail="inventory site_name does not match route")
+    return store.save_inventory(report).model_dump(mode="json")
 
 
 @app.post("/sites/validate")

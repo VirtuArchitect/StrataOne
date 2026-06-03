@@ -170,8 +170,48 @@ tbody tr.selected { background: #e9f5f7; }
 .action-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 14px;
+}
+
+.credential-box {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.credential-box label {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 5px;
+}
+
+.credential-box input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.inline-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.inline-controls label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.inline-controls input[type="number"] {
+  width: 72px;
 }
 
 .detail-list {
@@ -204,7 +244,8 @@ textarea {
 }
 
 .job-list,
-.provider-list {
+.provider-list,
+.inventory-list {
   display: grid;
   gap: 8px;
   max-height: 390px;

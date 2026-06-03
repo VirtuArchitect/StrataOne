@@ -1,9 +1,10 @@
-const apiBase = window.STRATAONE_API_BASE || "http://localhost:8080";
+﻿const apiBase = window.STRATAONE_API_BASE || "http://localhost:8080";
 
 const state = {
   sites: [],
   jobs: [],
   providers: [],
+  inventory: null,
   selectedSite: null,
   pollTimer: null,
 };
@@ -14,6 +15,8 @@ const els = {
   sitesTable: document.querySelector("#sitesTable"),
   jobsList: document.querySelector("#jobsList"),
   providerList: document.querySelector("#providerList"),
+  inventoryList: document.querySelector("#inventoryList"),
+  inventorySummary: document.querySelector("#inventorySummary"),
   resultOutput: document.querySelector("#resultOutput"),
   lastAction: document.querySelector("#lastAction"),
   siteCount: document.querySelector("#siteCount"),
@@ -22,6 +25,10 @@ const els = {
   attentionCount: document.querySelector("#attentionCount"),
   selectedSiteLabel: document.querySelector("#selectedSiteLabel"),
   siteDetails: document.querySelector("#siteDetails"),
+  bmcUsername: document.querySelector("#bmcUsername"),
+  bmcPassword: document.querySelector("#bmcPassword"),
+  bmcInsecure: document.querySelector("#bmcInsecure"),
+  bmcTimeout: document.querySelector("#bmcTimeout"),
 };
 
 const exampleYaml = `site:
@@ -101,6 +108,7 @@ async function loadSites() {
   state.sites = data.sites || [];
   if (!state.selectedSite && state.sites.length) state.selectedSite = state.sites[0].name;
   renderSites();
+  await loadInventory();
   renderMetrics();
 }
 
@@ -136,7 +144,7 @@ async function saveSite() {
 
 async function runJob(action) {
   if (!state.selectedSite) return;
-  const created = await apiPost(`/sites/${encodeURIComponent(state.selectedSite)}/jobs/${action}`, {});
+  const created = await apiPost(`/sites/${encodeURIComponent(state.selectedSite)}/jobs/${action}`, jobPayload(action));
   els.lastAction.textContent = `${action} queued`;
   els.resultOutput.textContent = JSON.stringify(created, null, 2);
   await loadJobs();
@@ -149,7 +157,10 @@ async function pollJob(jobId) {
     els.lastAction.textContent = `${job.action} ${job.status}`;
     els.resultOutput.textContent = JSON.stringify(job.result || { error: job.error, status: job.status }, null, 2);
     await loadJobs();
-    if (job.status === "succeeded" || job.status === "failed") return;
+    if (job.status === "succeeded" || job.status === "failed") {
+      if (job.action === "inventory" && job.status === "succeeded") await loadInventory();
+      return;
+    }
     await sleep(600);
   }
 }
@@ -175,6 +186,7 @@ function renderSites() {
 function selectSite(name) {
   state.selectedSite = name;
   renderSites();
+  loadInventory();
 }
 
 function renderSelectedSite() {
@@ -192,6 +204,7 @@ function renderSelectedSite() {
     <dt>Nodes</dt><dd>${site.nodes}</dd>
     <dt>Location</dt><dd>${escapeHtml(site.spec.site?.location || "-")}</dd>
     <dt>Model</dt><dd>${escapeHtml(site.spec.site?.deployment_model || "-")}</dd>
+    <dt>Inventory</dt><dd>${state.inventory ? `${state.inventory.reachable_nodes}/${state.inventory.total_nodes} reachable` : "not collected"}</dd>
   `;
 }
 
@@ -211,7 +224,7 @@ function renderJobs() {
   els.jobsList.innerHTML = state.jobs.slice(0, 20).map((job) => `
     <button class="list-item job-item" data-job-id="${escapeHtml(job.id)}">
       <strong>${escapeHtml(job.action)} <span class="status-${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></strong>
-      <span>${escapeHtml(job.site_name)} · ${formatDate(job.created_at)}</span>
+      <span>${escapeHtml(job.site_name)} Â· ${formatDate(job.created_at)}</span>
     </button>
   `).join("") || `<div class="list-item"><strong>No jobs yet</strong><span>Run an action to create a tracked job.</span></div>`;
 
@@ -224,11 +237,41 @@ function renderJobs() {
   });
 }
 
+async function loadInventory() {
+  if (!state.selectedSite) return;
+  try {
+    state.inventory = await apiGet(`/sites/${encodeURIComponent(state.selectedSite)}/inventory`);
+  } catch {
+    state.inventory = null;
+  }
+  renderInventory();
+  renderSelectedSite();
+}
+
+function renderInventory() {
+  if (!state.inventory) {
+    els.inventorySummary.textContent = "No inventory collected";
+    els.inventoryList.innerHTML = `<div class="list-item"><strong>No inventory yet</strong><span>Run Inventory with BMC credentials to collect hardware details.</span></div>`;
+    return;
+  }
+  const report = state.inventory.report;
+  els.inventorySummary.textContent = `${state.inventory.reachable_nodes}/${state.inventory.total_nodes} nodes reachable Â· ${formatDate(state.inventory.collected_at)}`;
+  els.inventoryList.innerHTML = (report.nodes || []).map((node) => `
+    <div class="list-item">
+      <strong>${escapeHtml(node.serial)} <span class="${node.reachable ? "status-succeeded" : "status-failed"}">${node.reachable ? "reachable" : "unreachable"}</span></strong>
+      <span>${escapeHtml(node.bmc_ip)} Â· ${escapeHtml([node.manufacturer, node.model].filter(Boolean).join(" ") || "model unknown")}</span>
+      <span>BIOS ${escapeHtml(node.bios_version || "-")} Â· CPU ${node.processor_count ?? "-"} Â· Memory ${node.memory_gib ? `${node.memory_gib} GiB` : "-"}</span>
+      <span>NICs ${(node.nics || []).length} Â· Storage ${(node.storage || []).length} Â· Capabilities ${(node.capabilities || []).join(", ") || "-"}</span>
+      ${node.error ? `<span class="status-failed">${escapeHtml(node.error)}</span>` : ""}
+    </div>
+  `).join("");
+}
+
 function renderProviders() {
   els.providerList.innerHTML = state.providers.map((provider) => `
     <div class="list-item">
       <strong>${escapeHtml(provider.name)}</strong>
-      <span>${escapeHtml(provider.type)} · ${escapeHtml(provider.source)}</span>
+      <span>${escapeHtml(provider.type)} Â· ${escapeHtml(provider.source)}</span>
       <span>${escapeHtml(provider.description)}</span>
     </div>
   `).join("");
@@ -237,6 +280,16 @@ function renderProviders() {
 function renderMetrics() {
   els.successCount.textContent = state.jobs.filter((job) => job.status === "succeeded").length;
   els.attentionCount.textContent = state.jobs.filter((job) => job.status === "failed").length;
+}
+
+function jobPayload(action) {
+  if (action !== "inventory") return {};
+  return {
+    username: els.bmcUsername.value || null,
+    password: els.bmcPassword.value || null,
+    insecure: els.bmcInsecure.checked,
+    timeout: Number(els.bmcTimeout.value || 10),
+  };
 }
 
 async function apiGet(path) {
@@ -362,3 +415,4 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
+

@@ -67,3 +67,28 @@ def test_artifact_endpoint_generates_bundle() -> None:
 
     assert response.status_code == 200
     assert response.json()["site_name"] == "branch-001"
+
+
+def test_inventory_can_be_saved_and_returned() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+    inventory = {
+        "site_name": "branch-001",
+        "provider": "generic-redfish",
+        "nodes": [
+            {
+                "serial": "ABC123",
+                "bmc_ip": "10.10.1.11",
+                "reachable": True,
+                "capabilities": ["boot-override", "virtual-media", "firmware-inventory"],
+            }
+        ],
+    }
+
+    save_response = client.post("/sites/branch-001/inventory", json={"inventory": inventory})
+    get_response = client.get("/sites/branch-001/inventory")
+
+    assert save_response.status_code == 200
+    assert get_response.status_code == 200
+    assert get_response.json()["reachable_nodes"] == 1

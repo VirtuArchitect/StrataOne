@@ -78,8 +78,23 @@
             <div class="action-grid">
               <button data-job="validate">Validate</button>
               <button data-job="plan">Plan</button>
+              <button data-job="inventory">Inventory</button>
               <button data-job="preflight">Preflight</button>
               <button data-job="artifacts">Artifacts</button>
+            </div>
+            <div class="credential-box">
+              <label>
+                BMC Username
+                <input id="bmcUsername" autocomplete="username" />
+              </label>
+              <label>
+                BMC Password
+                <input id="bmcPassword" type="password" autocomplete="current-password" />
+              </label>
+              <div class="inline-controls">
+                <label><input id="bmcInsecure" type="checkbox" checked /> Allow lab TLS</label>
+                <label>Timeout <input id="bmcTimeout" type="number" min="1" value="10" /></label>
+              </div>
             </div>
             <dl class="detail-list" id="siteDetails"></dl>
           </div>
@@ -103,6 +118,16 @@
               </div>
             </div>
             <div class="job-list" id="jobsList"></div>
+          </div>
+
+          <div class="panel span-6">
+            <div class="panel-header">
+              <div>
+                <h2>Latest Inventory</h2>
+                <span id="inventorySummary">No inventory collected</span>
+              </div>
+            </div>
+            <div class="inventory-list" id="inventoryList"></div>
           </div>
 
           <div class="panel span-6">
