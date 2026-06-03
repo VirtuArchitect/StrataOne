@@ -311,6 +311,12 @@ async function loadSettings() {
     state.settings = await apiGet("/settings");
     showSettingsSection(activeSettingsSection());
   } catch (error) {
+    if (isAuthError(error)) {
+      state.settings = null;
+      showSettingsSection(activeSettingsSection());
+      handleAuthRequired("/settings requires sign in.");
+      return;
+    }
     if (els.settingsContent) {
       els.settingsContent.innerHTML = `<div class="settings-empty">Settings unavailable: ${escapeHtml(error.message)}</div>`;
     }
@@ -1074,6 +1080,10 @@ function jobPayload(action) {
 
 async function apiGet(path) {
   const response = await apiFetch(path);
+  if (response.status === 401) {
+    handleAuthRequired(`${path} requires sign in.`);
+    throw new Error(`${path} failed with HTTP ${response.status}`);
+  }
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
@@ -1085,6 +1095,10 @@ async function apiPost(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (response.status === 401) {
+    handleAuthRequired(`${path} requires sign in.`);
+    throw new Error(`${path} failed with HTTP ${response.status}`);
+  }
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
@@ -1092,6 +1106,10 @@ async function apiPost(path, body) {
 async function apiDelete(path) {
   if (!state.authToken && !requestAuthToken()) throw new Error("authentication required");
   const response = await apiFetch(path, { method: "DELETE" });
+  if (response.status === 401) {
+    handleAuthRequired(`${path} requires sign in.`);
+    throw new Error(`${path} failed with HTTP ${response.status}`);
+  }
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
@@ -1239,13 +1257,17 @@ function logout() {
       headers: { Authorization: `Bearer ${state.authToken}` },
     }).catch(() => {});
   }
-  state.authToken = "";
-  state.authUser = "signed out";
-  localStorage.removeItem("strataone.authToken");
-  localStorage.setItem("strataone.authUser", state.authUser);
+  clearAuthState("signed out");
   writeResult("logout", { status: "dashboard bearer token cleared" });
   writeSiteAction("Dashboard session cleared");
   renderAuthState();
+}
+
+function clearAuthState(userLabel = "anonymous") {
+  state.authToken = "";
+  state.authUser = userLabel;
+  localStorage.removeItem("strataone.authToken");
+  localStorage.setItem("strataone.authUser", state.authUser);
 }
 
 function renderAuthState() {
@@ -1259,6 +1281,7 @@ function requestAuthToken() {
 }
 
 function showAuthModal() {
+  if (!els.authModal.hidden) return;
   els.authModal.hidden = false;
   els.loginPassword.value = "";
   els.loginUsername.focus();
@@ -1302,9 +1325,20 @@ function renderAuthRequired() {
   renderProviders();
   renderMetrics();
   writeResult("authentication required", {
-    status: "Sign in with an API token to load protected operational data.",
-    default_compose_token: "change-this-token",
+    status: "Sign in with a StrataOne local user account to load protected operational data.",
+    default_user: "admin",
   });
+  showAuthModal();
+}
+
+function handleAuthRequired(message = "Sign in required.") {
+  clearAuthState("anonymous");
+  renderAuthState();
+  if (els.settingsContent && state.activeView === "settings") {
+    els.settingsContent.innerHTML = `<div class="settings-empty">Sign in to view and manage settings.</div>`;
+  }
+  writeResult("authentication required", { status: message, default_user: "admin" });
+  showAuthModal();
 }
 
 function isAuthError(error) {
