@@ -357,6 +357,15 @@
                 <button class="secondary" type="button" id="cancelProvider">Cancel</button>
               </div>
             </form>
+            <form class="settings-form provider-form" id="providerConfigForm" hidden>
+              <h3 id="providerConfigTitle">Provider Details</h3>
+              <div class="settings-grid" id="providerDetailGrid"></div>
+              <label>Configuration JSON<textarea id="providerConfigJson" spellcheck="false">{}</textarea></label>
+              <div class="button-row">
+                <button type="submit">Save Configuration</button>
+                <button class="secondary" type="button" id="cancelProviderConfig">Close</button>
+              </div>
+            </form>
             <div class="provider-list" id="providerList"></div>
           </div>
         </section>

@@ -85,7 +85,8 @@ def test_mount_iso_job_requires_iso_contract() -> None:
     )
 
     assert response.status_code == 200
-    assert "job_id" in response.json()
+    assert response.json()["status"] == "approval-required"
+    assert "approval_id" in response.json()
 
 
 def test_settings_endpoint_returns_enterprise_sections() -> None:
@@ -157,6 +158,47 @@ def test_password_login_issues_session_token(monkeypatch) -> None:
     assert login_response.status_code == 200
     assert login_response.json()["username"] == "login.user"
     assert sites_response.status_code == 200
+
+
+def test_logout_revokes_password_session(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post(
+        "/access/roles",
+        json={"name": "Logout Reader", "description": "Can read sites", "permissions": ["read-sites"]},
+    )
+    client.post(
+        "/access/users",
+        json={
+            "username": "logout.user",
+            "display_name": "Logout User",
+            "email": "logout.user@example.com",
+            "roles": ["Logout Reader"],
+            "status": "active",
+            "password": "StrataOneLogout123!",
+        },
+    )
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    token = client.post("/auth/login", json={"username": "logout.user", "password": "StrataOneLogout123!"}).json()["token"]
+
+    logout_response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+    sites_response = client.get("/sites", headers={"Authorization": f"Bearer {token}"})
+
+    assert logout_response.json()["revoked"] is True
+    assert sites_response.status_code == 401
+
+
+def test_audit_provider_config_and_job_events() -> None:
+    client = TestClient(app)
+
+    provider_response = client.get("/providers/generic-redfish")
+    config_response = client.post("/providers/generic-redfish/config", json={"config": {"endpoint_mode": "redfish"}})
+    audit_response = client.get("/audit")
+
+    assert provider_response.status_code == 200
+    assert config_response.status_code == 200
+    assert config_response.json()["config"]["endpoint_mode"] == "redfish"
+    assert audit_response.status_code == 200
+    assert "audit" in audit_response.json()
 
 
 def test_provider_api_creates_custom_provider() -> None:

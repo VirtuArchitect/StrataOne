@@ -37,6 +37,26 @@ def test_job_runner_executes_plan_job(tmp_path: Path) -> None:
     job = store.get_job(job_id)
     assert job.status == "succeeded"
     assert job.result["site_name"] == "branch-001"
+    assert any(event.message == "Job completed" for event in store.list_job_events(job_id))
+
+
+def test_job_runner_executes_lifecycle_and_azure_local_contracts(tmp_path: Path) -> None:
+    store = StrataStore(tmp_path / "strataone.db")
+    store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
+    runner = JobRunner(store)
+
+    drift_id = runner.submit("branch-001", "drift-detect")
+    deploy_id = runner.submit("branch-001", "deploy-azure-local", {"approval_id": "approved"})
+
+    for _ in range(30):
+        drift = store.get_job(drift_id)
+        deploy = store.get_job(deploy_id)
+        if drift and deploy and drift.status == "succeeded" and deploy.status == "succeeded":
+            break
+        time.sleep(0.05)
+
+    assert store.get_job(drift_id).result["action"] == "drift-detect"
+    assert store.get_job(deploy_id).result["stages"][0]["name"] == "validate-prerequisites"
 
 
 def test_job_runner_can_leave_jobs_for_durable_worker(tmp_path: Path, monkeypatch) -> None:

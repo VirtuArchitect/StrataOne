@@ -1,10 +1,12 @@
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
 
 from strataone.artifacts import ArtifactGenerator
@@ -14,7 +16,7 @@ from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.queue import queue_backend
-from strataone.security import ALL_PERMISSIONS, auth_enabled, cors_origins, create_password_hash, new_session_token, require_permission, session_expiry, token_hash, verify_password
+from strataone.security import ALL_PERMISSIONS, AuthContext, auth_enabled, cors_origins, create_password_hash, new_session_token, require_permission, session_expiry, token_hash, verify_password, _bearer_token
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 from strataone.validation import validation_summary
@@ -34,6 +36,7 @@ class JobPayload(BaseModel):
     timeout: float | None = None
     iso_url: HttpUrl | None = None
     boot_once: bool | None = None
+    approval_id: str | None = None
 
 
 class RolePayload(BaseModel):
@@ -61,6 +64,10 @@ class ProviderPayload(BaseModel):
     type: str
     description: str
     vendor_supported: bool = False
+
+
+class ProviderConfigPayload(BaseModel):
+    config: dict[str, Any]
 
 
 store = StrataStore()
@@ -108,6 +115,7 @@ read_providers = Depends(require_permission("read-providers", store))
 manage_providers = Depends(require_permission("manage-providers", store))
 read_settings = Depends(require_permission("read-settings", store))
 manage_access = Depends(require_permission("manage-access", store))
+read_audit = Depends(require_permission("read-audit", store))
 worker_execute = Depends(require_permission("worker-execute", store))
 
 
@@ -136,6 +144,7 @@ def login(payload: LoginPayload) -> dict[str, Any]:
     token = new_session_token()
     expires_at = session_expiry()
     store.create_session(token_hash(token), user.username, expires_at)
+    store.add_audit(user.username, "auth.login", f"user:{user.username}", {"method": "password"})
     return {
         "token": token,
         "username": user.username,
@@ -143,6 +152,16 @@ def login(payload: LoginPayload) -> dict[str, Any]:
         "roles": user.roles,
         "expires_at": expires_at,
     }
+
+
+@app.post("/auth/logout")
+def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    token = _bearer_token(authorization)
+    if not token:
+        return {"revoked": False}
+    revoked = store.revoke_session(token_hash(token))
+    store.add_audit("session", "auth.logout", "session", {"revoked": revoked})
+    return {"revoked": revoked}
 
 
 @app.get("/sites/example")
@@ -194,7 +213,9 @@ def create_or_update_provider(payload: ProviderPayload, _: Any = manage_provider
         vendor_supported=payload.vendor_supported,
         editable=True,
     )
-    return upsert_plugin_provider(provider).model_dump(mode="json")
+    result = upsert_plugin_provider(provider).model_dump(mode="json")
+    store.add_audit("api", "provider.upsert", f"provider:{name}", result)
+    return result
 
 
 @app.delete("/providers/{provider_name}")
@@ -202,7 +223,27 @@ def delete_provider(provider_name: str, _: Any = manage_providers) -> dict[str, 
     built_in = [provider for provider in list_providers() if provider.name == provider_name and not provider.editable]
     if built_in:
         raise HTTPException(status_code=409, detail="built-in providers cannot be deleted")
-    return {"deleted": delete_plugin_provider(provider_name)}
+    deleted = delete_plugin_provider(provider_name)
+    store.add_audit("api", "provider.delete", f"provider:{provider_name}", {"deleted": deleted})
+    return {"deleted": deleted}
+
+
+@app.get("/providers/{provider_name}")
+def provider_detail(provider_name: str, _: Any = read_providers) -> dict[str, Any]:
+    provider = next((item for item in list_providers() if item.name == provider_name), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+    config = store.get_provider_config(provider_name)
+    return {"provider": provider.model_dump(mode="json"), "config": config.model_dump(mode="json") if config else None}
+
+
+@app.post("/providers/{provider_name}/config")
+def save_provider_config(provider_name: str, payload: ProviderConfigPayload, _: Any = manage_providers) -> dict[str, Any]:
+    if not any(item.name == provider_name for item in list_providers()):
+        raise HTTPException(status_code=404, detail="provider not found")
+    config = store.upsert_provider_config(provider_name, payload.config)
+    store.add_audit("api", "provider.config.upsert", f"provider:{provider_name}", payload.config)
+    return config.model_dump(mode="json")
 
 
 @app.get("/settings")
@@ -256,11 +297,14 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "download_bundles_enabled": False,
         },
         "audit": {
-            "enabled": False,
+            "enabled": True,
             "job_history_retention_days": int(os.getenv("STRATAONE_JOB_RETENTION_DAYS", "90")),
-            "configuration_change_tracking": "planned",
+            "configuration_change_tracking": "enabled",
         },
         "validation": validation_summary(),
+        "migrations": {
+            "applied": [item.model_dump(mode="json") for item in store.list_migrations()],
+        },
     }
 
 
@@ -323,12 +367,16 @@ def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[
         updated_at="",
     )
     password_hash = create_password_hash(payload.password) if payload.password else None
-    return store.upsert_user(user, password_hash=password_hash).model_dump(mode="json")
+    result = store.upsert_user(user, password_hash=password_hash).model_dump(mode="json")
+    store.add_audit("api", "user.upsert", f"user:{user.username}", {"roles": user.roles, "status": user.status})
+    return result
 
 
 @app.delete("/access/users/{username}")
 def delete_user(username: str, _: Any = manage_access) -> dict[str, bool]:
-    return {"deleted": store.delete_user(username)}
+    deleted = store.delete_user(username)
+    store.add_audit("api", "user.delete", f"user:{username}", {"deleted": deleted})
+    return {"deleted": deleted}
 
 
 @app.get("/sites")
@@ -339,7 +387,9 @@ def list_site_records(_: Any = read_sites) -> dict[str, Any]:
 @app.post("/sites")
 def create_or_update_site(payload: SitePayload, _: Any = write_sites) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
-    return store.upsert_site(spec).model_dump(mode="json")
+    result = store.upsert_site(spec).model_dump(mode="json")
+    store.add_audit("api", "site.upsert", f"site:{spec.site.name}", {"platform": spec.platform.type.value})
+    return result
 
 
 @app.get("/sites/{site_name}")
@@ -352,17 +402,26 @@ def get_site_record(site_name: str, _: Any = read_sites) -> dict[str, Any]:
 
 @app.delete("/sites/{site_name}")
 def delete_site_record(site_name: str, _: Any = delete_sites) -> dict[str, bool]:
-    return {"deleted": store.delete_site(site_name)}
+    deleted = store.delete_site(site_name)
+    store.add_audit("api", "site.delete", f"site:{site_name}", {"deleted": deleted})
+    return {"deleted": deleted}
 
 
 @app.post("/sites/{site_name}/jobs/{action}")
 def run_site_job(site_name: str, action: str, payload: JobPayload | None = None, authorization: str | None = Header(default=None)) -> dict[str, str]:
-    if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso"}:
+    if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso", "deploy-azure-local", "drift-detect", "node-replacement"}:
         raise HTTPException(status_code=400, detail="unsupported action")
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")
-    require_permission(_permission_for_action(action), store)(authorization)
+    context = require_permission(_permission_for_action(action), store)(authorization)
     params = payload.model_dump(mode="json", exclude_none=True) if payload else {}
+    if _approval_required(action, params):
+        approval_id = params.get("approval_id")
+        approval = store.get_approval(approval_id) if approval_id else None
+        if approval is None or approval.status != "approved":
+            pending = store.create_approval(site_name, action, context.username, {"params": _approval_safe_params(params)})
+            store.add_audit(context.username, "approval.requested", f"approval:{pending.id}", {"site": site_name, "action": action})
+            return {"approval_id": pending.id, "status": "approval-required"}
     return {"job_id": jobs.submit(site_name, action, params)}
 
 
@@ -377,6 +436,49 @@ def get_job_record(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     return job.model_dump(mode="json")
+
+
+@app.get("/jobs/{job_id}/events")
+def get_job_events(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
+    return {"events": [event.model_dump(mode="json") for event in store.list_job_events(job_id)]}
+
+
+@app.get("/jobs/{job_id}/events/stream")
+def stream_job_events(job_id: str, _: Any = read_jobs) -> StreamingResponse:
+    def event_stream():
+        seen: set[str] = set()
+        for _ in range(120):
+            events = store.list_job_events(job_id)
+            for event in events:
+                if event.id in seen:
+                    continue
+                seen.add(event.id)
+                yield f"event: job-event\ndata: {event.model_dump_json()}\n\n"
+            job = store.get_job(job_id)
+            if job and job.status in {"succeeded", "failed"} and all(event.id in seen for event in events):
+                break
+            time.sleep(1)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/audit")
+def list_audit_log(limit: int = 100, _: Any = read_audit) -> dict[str, Any]:
+    return {"audit": [item.model_dump(mode="json") for item in store.list_audit(limit)]}
+
+
+@app.get("/approvals")
+def list_approval_records(_: Any = read_jobs) -> dict[str, Any]:
+    return {"approvals": [item.model_dump(mode="json") for item in store.list_approvals()]}
+
+
+@app.post("/approvals/{approval_id}/approve")
+def approve_request(approval_id: str, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
+    approval = store.approve(approval_id, context.username)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    store.add_audit(context.username, "approval.approved", f"approval:{approval_id}", approval.model_dump(mode="json"))
+    return approval.model_dump(mode="json")
 
 
 @app.post("/sites/{site_name}/artifacts")
@@ -443,4 +545,17 @@ def _permission_for_action(action: str) -> str:
         "preflight": "run-preflight",
         "artifacts": "generate-artifacts",
         "mount-iso": "mount-iso",
+        "deploy-azure-local": "run-plan",
+        "drift-detect": "run-preflight",
+        "node-replacement": "run-preflight",
     }[action]
+
+
+def _approval_required(action: str, params: dict[str, Any]) -> bool:
+    if not os.getenv("STRATAONE_REQUIRE_APPROVALS", "true").lower() in {"1", "true", "yes", "on"}:
+        return False
+    return action in {"mount-iso", "deploy-azure-local", "node-replacement"}
+
+
+def _approval_safe_params(params: dict[str, Any]) -> dict[str, Any]:
+    return {key: ("***" if key in {"password", "username"} else value) for key, value in params.items()}

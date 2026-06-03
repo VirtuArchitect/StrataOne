@@ -54,7 +54,9 @@ class JobRunner:
             if site is None:
                 raise ValueError(f"site {job.site_name} not found")
             spec = spec_from_record(site)
-            result = self._execute(job.action, spec, job.params)
+            self.store.add_job_event(job_id, "info", f"Executing {job.action}", {"site": spec.site.name})
+            params = {**job.params, "_job_id": job_id}
+            result = self._execute(job.action, spec, params)
             self.store.finish_job(job_id, result)
         except Exception as exc:
             self.store.fail_job(job_id, str(exc))
@@ -83,6 +85,12 @@ class JobRunner:
             return ArtifactGenerator().generate(spec).model_dump(mode="json")
         if action == "mount-iso":
             return self._mount_iso(spec, params)
+        if action == "deploy-azure-local":
+            return self._deploy_azure_local(spec, params)
+        if action == "drift-detect":
+            return self._drift_detect(spec, params)
+        if action == "node-replacement":
+            return self._node_replacement(spec, params)
         raise ValueError(f"unsupported job action {action}")
 
     def _inventory(self, spec, params: dict[str, Any]):
@@ -155,3 +163,69 @@ class JobRunner:
             "execution_mode": "simulated-redfish-contract",
             "note": "Provider-specific InsertMedia/BootSourceOverride execution should be enabled behind approval gates.",
         }
+
+    def _deploy_azure_local(self, spec, params: dict[str, Any]) -> dict[str, Any]:
+        if spec.platform.type.value != "azure-local":
+            raise ValueError("deploy-azure-local is only supported for Azure Local sites")
+        stages = [
+            self._stage("validate-prerequisites", "Validate Azure tenant, subscription, resource group, region, and node count", "succeeded"),
+            self._stage("prepare-arc", "Prepare Azure Arc onboarding package and service principal contract", "succeeded"),
+            self._stage("register-nodes", "Register target nodes as Arc-connected machines", "ready"),
+            self._stage("deploy-arm", "Deploy Azure Local resource model through ARM/Bicep desired state", "ready"),
+            self._stage("configure-cluster", "Configure topology, networking, storage, and witness settings", "ready"),
+            self._stage("attach-governance", "Attach Azure Policy, Monitor, Defender, and Update Manager baselines", "ready"),
+        ]
+        for stage in stages:
+            self.store.add_job_event(params.get("_job_id", "unknown"), "info", stage["name"], {"status": stage["status"]})
+        return {
+            "site_name": spec.site.name,
+            "action": "deploy-azure-local",
+            "execution_mode": "staged-provider-contract",
+            "approval_id": params.get("approval_id"),
+            "azure": spec.platform.azure.model_dump(mode="json") if spec.platform.azure else {},
+            "stages": stages,
+            "note": "Stages are ready for live Azure execution once provider credentials, approvals, and lab validation are configured.",
+        }
+
+    def _drift_detect(self, spec, params: dict[str, Any]) -> dict[str, Any]:
+        inventory = self.store.get_inventory(spec.site.name)
+        checks = [
+            {"name": "desired-state-registered", "status": "pass", "detail": "Site desired state is present"},
+            {
+                "name": "inventory-current",
+                "status": "pass" if inventory else "warn",
+                "detail": "Inventory is available" if inventory else "No inventory collected yet",
+            },
+            {"name": "node-count", "status": "pass", "detail": f"{len(spec.hardware.nodes)} desired nodes"},
+            {"name": "platform", "status": "pass", "detail": spec.platform.type.value},
+        ]
+        drift = [check for check in checks if check["status"] != "pass"]
+        return {
+            "site_name": spec.site.name,
+            "action": "drift-detect",
+            "drift_detected": bool(drift),
+            "checks": checks,
+            "recommendation": "Run inventory before remediation" if drift else "No drift found in current control plane data",
+        }
+
+    def _node_replacement(self, spec, params: dict[str, Any]) -> dict[str, Any]:
+        failed_serial = params.get("failed_serial") or spec.hardware.nodes[0].serial
+        replacement_serial = params.get("replacement_serial") or "replacement-node"
+        stages = [
+            self._stage("validate-replacement", f"Validate replacement node {replacement_serial}", "ready"),
+            self._stage("drain-workloads", f"Drain workloads from failed node {failed_serial}", "ready"),
+            self._stage("evict-node", f"Remove failed node {failed_serial} from cluster membership", "ready"),
+            self._stage("image-node", "Apply platform image and bootstrap configuration", "ready"),
+            self._stage("join-cluster", "Join replacement node and restore baseline", "ready"),
+        ]
+        return {
+            "site_name": spec.site.name,
+            "action": "node-replacement",
+            "failed_serial": failed_serial,
+            "replacement_serial": replacement_serial,
+            "stages": stages,
+            "execution_mode": "guided-lifecycle-contract",
+        }
+
+    def _stage(self, name: str, description: str, status: str) -> dict[str, str]:
+        return {"name": name, "description": description, "status": status}

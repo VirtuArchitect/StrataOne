@@ -150,6 +150,7 @@ function wireEvents() {
   document.querySelector("#addNode").addEventListener("click", addDeploymentNode);
   document.querySelector("#newProvider").addEventListener("click", () => showProviderForm());
   document.querySelector("#cancelProvider").addEventListener("click", hideProviderForm);
+  document.querySelector("#cancelProviderConfig").addEventListener("click", hideProviderConfig);
   document.querySelector("#previousStep").addEventListener("click", previousWizardStep);
   document.querySelector("#nextStep").addEventListener("click", nextWizardStep);
   document.querySelector("#newDeploymentTop").addEventListener("click", () => showView("deployments"));
@@ -364,6 +365,11 @@ async function runJob(action, siteName = state.selectedSite) {
   if (!siteName) return;
   try {
     const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, jobPayload(action));
+    if (created.status === "approval-required") {
+      writeResult(`${action} approval required`, created);
+      writeSiteAction(`${action} requires approval ${created.approval_id}`, "info");
+      return;
+    }
     writeResult(`${action} queued`, created);
     writeSiteAction(`${action} queued for ${siteName}`);
     await loadJobs();
@@ -527,6 +533,7 @@ function renderProviders() {
         <span>${escapeHtml(provider.description)}</span>
       </div>
       <div class="row-actions">
+        <button class="mini secondary" data-provider-detail="${escapeHtml(provider.name)}">Details</button>
         <button class="mini secondary" data-edit-provider="${escapeHtml(provider.name)}">Edit</button>
         ${provider.editable ? `<button class="mini danger" data-delete-provider="${escapeHtml(provider.name)}">Remove</button>` : `<button class="mini secondary" disabled>Built-in</button>`}
       </div>
@@ -579,6 +586,10 @@ function showProviderForm(provider) {
 function hideProviderForm() {
   document.querySelector("#providerForm").hidden = true;
   document.querySelector("#providerName").disabled = false;
+}
+
+function hideProviderConfig() {
+  document.querySelector("#providerConfigForm").hidden = true;
 }
 
 function renderLifecycle(activeId) {
@@ -732,12 +743,16 @@ async function handleDocumentActions(event) {
   }
   const lifecycleRun = event.target.closest("[data-lifecycle-run]");
   if (lifecycleRun) {
-    writeResult("lifecycle workflow opened", {
-      workflow: lifecycleRun.dataset.lifecycleRun,
-      site: state.selectedSite || "select a site",
-      status: "ready",
-    });
+    const action = lifecycleRun.dataset.lifecycleRun === "drift" ? "drift-detect"
+      : lifecycleRun.dataset.lifecycleRun === "replacement" ? "node-replacement"
+      : "preflight";
+    await runJob(action);
     showView("jobs");
+    return;
+  }
+  const providerDetail = event.target.closest("[data-provider-detail]");
+  if (providerDetail) {
+    await showProviderDetail(providerDetail.dataset.providerDetail);
     return;
   }
   const editProvider = event.target.closest("[data-edit-provider]");
@@ -821,6 +836,14 @@ async function handleDocumentSubmit(event) {
     await loadSettings();
     return;
   }
+  if (event.target.id === "providerConfigForm") {
+    event.preventDefault();
+    const providerName = document.querySelector("#providerConfigForm").dataset.providerName;
+    const config = JSON.parse(document.querySelector("#providerConfigJson").value || "{}");
+    const saved = await apiPost(`/providers/${encodeURIComponent(providerName)}/config`, { config });
+    writeResult("provider config saved", saved);
+    return;
+  }
   if (event.target.id === "roleForm") {
     event.preventDefault();
     const role = await apiPost("/access/roles", {
@@ -882,6 +905,21 @@ function providerRow(provider) {
       <span>${escapeHtml(provider.description)} - ${escapeHtml(provider.source)}</span>
     </div>
   `;
+}
+
+async function showProviderDetail(providerName) {
+  const detail = await apiGet(`/providers/${encodeURIComponent(providerName)}`);
+  const form = document.querySelector("#providerConfigForm");
+  form.hidden = false;
+  form.dataset.providerName = providerName;
+  document.querySelector("#providerConfigTitle").textContent = `${providerName} Details`;
+  document.querySelector("#providerDetailGrid").innerHTML = `
+    ${settingCard("Type", detail.provider.type)}
+    ${settingCard("Source", detail.provider.source)}
+    ${settingCard("Support", detail.provider.vendor_supported ? "vendor supported" : "community")}
+  `;
+  document.querySelector("#providerConfigJson").value = JSON.stringify(detail.config?.config || {}, null, 2);
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function formatSettingValue(value) {
@@ -1195,6 +1233,12 @@ function toggleAuthSession() {
 }
 
 function logout() {
+  if (state.authToken) {
+    fetchWithTimeout(`${apiBase}/auth/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${state.authToken}` },
+    }).catch(() => {});
+  }
   state.authToken = "";
   state.authUser = "signed out";
   localStorage.removeItem("strataone.authToken");

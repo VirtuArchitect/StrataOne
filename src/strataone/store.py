@@ -63,6 +63,47 @@ class UserRecord(BaseModel):
     updated_at: str
 
 
+class AuditRecord(BaseModel):
+    id: str
+    actor: str
+    action: str
+    resource: str
+    detail: dict[str, Any]
+    created_at: str
+
+
+class ApprovalRecord(BaseModel):
+    id: str
+    site_name: str
+    action: str
+    status: str
+    requested_by: str
+    approved_by: str | None = None
+    detail: dict[str, Any] = {}
+    created_at: str
+    updated_at: str
+
+
+class JobEventRecord(BaseModel):
+    id: str
+    job_id: str
+    level: str
+    message: str
+    detail: dict[str, Any]
+    created_at: str
+
+
+class ProviderConfigRecord(BaseModel):
+    provider_name: str
+    config: dict[str, Any]
+    updated_at: str
+
+
+class MigrationRecord(BaseModel):
+    version: str
+    applied_at: str
+
+
 class DbConnection(Protocol):
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         ...
@@ -188,12 +229,86 @@ class StrataStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id TEXT PRIMARY KEY,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS approvals (
+                    id TEXT PRIMARY KEY,
+                    site_name TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    approved_by TEXT,
+                    detail_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS job_events (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_configs (
+                    provider_name TEXT PRIMARY KEY,
+                    config_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
             if self.backend == "sqlite":
                 self._ensure_column(conn, "jobs", "params_json", "TEXT")
                 self._ensure_column(conn, "users", "password_hash", "TEXT")
             if self.backend == "postgres":
                 conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
+        self.apply_migrations()
         self.seed_access_defaults()
+
+    def apply_migrations(self) -> None:
+        migrations = [
+            ("001_core_state", "Core site, job, inventory, access, and session tables"),
+            ("002_audit_approval_events", "Audit log, approval gates, job events, and provider configs"),
+        ]
+        applied = {item.version for item in self.list_migrations()}
+        with self._connect() as conn:
+            for version, _description in migrations:
+                if version in applied:
+                    continue
+                conn.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", (version, _now()))
+
+    def list_migrations(self) -> list[MigrationRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM schema_migrations ORDER BY version").fetchall()
+        return [MigrationRecord(version=row["version"], applied_at=row["applied_at"]) for row in rows]
 
     def upsert_site(self, spec: SiteSpec) -> SiteRecord:
         now = _now()
@@ -255,6 +370,7 @@ class StrataStore:
     def start_job(self, job_id: str) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?", ("running", _now(), job_id))
+        self.add_job_event(job_id, "info", "Job started", {"status": "running"})
 
     def claim_next_job(self) -> JobRecord | None:
         if self.backend == "postgres":
@@ -291,6 +407,7 @@ class StrataStore:
                 "UPDATE jobs SET status = ?, result_json = ?, finished_at = ? WHERE id = ?",
                 ("succeeded", json.dumps(result), _now(), job_id),
             )
+        self.add_job_event(job_id, "info", "Job completed", {"status": "succeeded"})
 
     def fail_job(self, job_id: str, error: str) -> None:
         with self._connect() as conn:
@@ -298,6 +415,7 @@ class StrataStore:
                 "UPDATE jobs SET status = ?, error = ?, finished_at = ? WHERE id = ?",
                 ("failed", error, _now(), job_id),
             )
+        self.add_job_event(job_id, "error", "Job failed", {"error": error})
 
     def get_job(self, job_id: str) -> JobRecord | None:
         with self._connect() as conn:
@@ -379,6 +497,7 @@ class StrataStore:
                     "manage-providers",
                     "manage-settings",
                     "manage-access",
+                    "read-audit",
                     "worker-execute",
                 ],
                 built_in=True,
@@ -517,6 +636,92 @@ class StrataStore:
             row = conn.execute("SELECT username FROM sessions WHERE token_hash = ? AND expires_at > ?", (token_hash, now)).fetchone()
         return self.get_user(row["username"]) if row else None
 
+    def revoke_session(self, token_hash: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        return result.rowcount > 0
+
+    def add_audit(self, actor: str, action: str, resource: str, detail: dict[str, Any] | None = None) -> AuditRecord:
+        audit_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO audit_log (id, actor, action, resource, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (audit_id, actor, action, resource, json.dumps(detail or {}), now),
+            )
+        return AuditRecord(id=audit_id, actor=actor, action=action, resource=resource, detail=detail or {}, created_at=now)
+
+    def list_audit(self, limit: int = 100) -> list[AuditRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [self._audit_from_row(row) for row in rows]
+
+    def create_approval(self, site_name: str, action: str, requested_by: str, detail: dict[str, Any] | None = None) -> ApprovalRecord:
+        approval_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO approvals (id, site_name, action, status, requested_by, detail_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (approval_id, site_name, action, "pending", requested_by, json.dumps(detail or {}), now, now),
+            )
+        return self.get_approval(approval_id)  # type: ignore[return-value]
+
+    def approve(self, approval_id: str, approved_by: str) -> ApprovalRecord | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE approvals SET status = ?, approved_by = ?, updated_at = ? WHERE id = ?",
+                ("approved", approved_by, _now(), approval_id),
+            )
+        return self.get_approval(approval_id)
+
+    def get_approval(self, approval_id: str) -> ApprovalRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+        return self._approval_from_row(row) if row else None
+
+    def list_approvals(self) -> list[ApprovalRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()
+        return [self._approval_from_row(row) for row in rows]
+
+    def add_job_event(self, job_id: str, level: str, message: str, detail: dict[str, Any] | None = None) -> JobEventRecord:
+        event_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO job_events (id, job_id, level, message, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (event_id, job_id, level, message, json.dumps(detail or {}), now),
+            )
+        return JobEventRecord(id=event_id, job_id=job_id, level=level, message=message, detail=detail or {}, created_at=now)
+
+    def list_job_events(self, job_id: str) -> list[JobEventRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM job_events WHERE job_id = ? ORDER BY created_at", (job_id,)).fetchall()
+        return [self._job_event_from_row(row) for row in rows]
+
+    def upsert_provider_config(self, provider_name: str, config: dict[str, Any]) -> ProviderConfigRecord:
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_configs (provider_name, config_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(provider_name) DO UPDATE SET
+                    config_json=excluded.config_json,
+                    updated_at=excluded.updated_at
+                """,
+                (provider_name, json.dumps(config), now),
+            )
+        return self.get_provider_config(provider_name)  # type: ignore[return-value]
+
+    def get_provider_config(self, provider_name: str) -> ProviderConfigRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM provider_configs WHERE provider_name = ?", (provider_name,)).fetchone()
+        return self._provider_config_from_row(row) if row else None
+
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
             name=row["name"],
@@ -575,6 +780,46 @@ class StrataStore:
             status=row["status"],
             password_configured=bool(row["password_hash"]) if "password_hash" in row.keys() else False,
             created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _audit_from_row(self, row) -> AuditRecord:
+        return AuditRecord(
+            id=row["id"],
+            actor=row["actor"],
+            action=row["action"],
+            resource=row["resource"],
+            detail=json.loads(row["detail_json"]),
+            created_at=row["created_at"],
+        )
+
+    def _approval_from_row(self, row) -> ApprovalRecord:
+        return ApprovalRecord(
+            id=row["id"],
+            site_name=row["site_name"],
+            action=row["action"],
+            status=row["status"],
+            requested_by=row["requested_by"],
+            approved_by=row["approved_by"],
+            detail=json.loads(row["detail_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _job_event_from_row(self, row) -> JobEventRecord:
+        return JobEventRecord(
+            id=row["id"],
+            job_id=row["job_id"],
+            level=row["level"],
+            message=row["message"],
+            detail=json.loads(row["detail_json"]),
+            created_at=row["created_at"],
+        )
+
+    def _provider_config_from_row(self, row) -> ProviderConfigRecord:
+        return ProviderConfigRecord(
+            provider_name=row["provider_name"],
+            config=json.loads(row["config_json"]),
             updated_at=row["updated_at"],
         )
 

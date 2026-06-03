@@ -199,6 +199,8 @@ Endpoints:
 ```text
 GET  /health
 GET  /providers
+GET  /providers/{provider_name}
+POST /providers/{provider_name}/config
 GET  /sites/example
 GET  /sites
 POST /sites
@@ -210,7 +212,12 @@ POST /sites/preflight
 POST /sites/{site_name}/jobs/{action}
 GET  /jobs
 GET  /jobs/{job_id}
+GET  /jobs/{job_id}/events
+GET  /jobs/{job_id}/events/stream
 POST /jobs/worker/run-once
+GET  /audit
+GET  /approvals
+POST /approvals/{approval_id}/approve
 GET  /validation/oem
 GET  /sites/{site_name}/inventory
 POST /sites/{site_name}/inventory
@@ -226,6 +233,9 @@ inventory
 preflight
 artifacts
 mount-iso
+deploy-azure-local
+drift-detect
+node-replacement
 ```
 
 ### Deployment Execution Model
@@ -239,6 +249,8 @@ Current deployment is approval-oriented and staged:
 5. Hand off to provider-specific execution gates.
 
 The `mount-iso` job defaults to a simulated execution contract. Set `STRATAONE_ENABLE_LIVE_REDFISH=true` to execute Redfish `VirtualMedia.InsertMedia` and one-time CD/DVD boot override calls against discovered BMC endpoints.
+
+Live or materially changing actions are approval-gated when `STRATAONE_REQUIRE_APPROVALS=true`. A request returns an `approval_id`; approve it through `POST /approvals/{approval_id}/approve`, then retry the action with that `approval_id`.
 
 Production job execution uses PostgreSQL for durable state and Redis for dispatch:
 
@@ -324,6 +336,8 @@ This repository currently contains the first buildable foundation:
 - PostgreSQL-capable persistent state backend with SQLite local fallback
 - Redis-backed queue dispatch with CLI/API worker execution
 - Durable queued job parameters
+- Schema migration registry
+- Audit log, approvals, server-side session revoke, and job event streaming
 - Bearer-token authentication and RBAC route enforcement
 - Environment, file, and HashiCorp Vault-compatible BMC secret providers
 - Dashboard-driven Redfish inventory jobs
@@ -331,6 +345,9 @@ This repository currently contains the first buildable foundation:
 - Azure Local deployment artifact generation
 - Redfish capability checks
 - Redfish virtual-media insert/eject and boot override client operations
+- Azure Local staged deployment execution contract
+- Drift detection and node replacement lifecycle workflows
+- Provider detail and configuration API/dashboard controls
 - Built-in and filesystem provider discovery
 - Enterprise dashboard shell
 - Hardware provider contract
