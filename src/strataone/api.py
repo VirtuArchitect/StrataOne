@@ -56,6 +56,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "name": "StrataOne API",
+        "status": "ok",
+        "dashboard": "http://localhost:8088",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
 @app.get("/sites/example")
 def example_site() -> dict[str, Any]:
     try:

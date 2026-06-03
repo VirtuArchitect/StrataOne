@@ -123,9 +123,20 @@ docker compose up --build
 
 Services:
 
-- Dashboard: http://localhost:3000
+- Dashboard: http://localhost:8088
 - API: http://localhost:8080
 - API health: http://localhost:8080/health
+- API docs: http://localhost:8080/docs
+
+If either port is unavailable, override it:
+
+```powershell
+$env:STRATAONE_DASHBOARD_PORT = "8090"
+$env:STRATAONE_API_PORT = "8091"
+docker compose up --build
+```
+
+Or create a `.env` file from `.env.example`.
 
 The Compose stack currently runs:
 

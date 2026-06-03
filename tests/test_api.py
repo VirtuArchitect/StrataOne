@@ -12,6 +12,16 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_root_endpoint_points_to_docs_and_dashboard() -> None:
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "StrataOne API"
+    assert response.json()["docs"] == "/docs"
+
+
 def test_plan_endpoint_accepts_site_payload() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()
