@@ -55,13 +55,10 @@ button:hover { background: #0f4f66; }
 }
 
 .brand-mark {
-  align-items: center;
-  background: var(--accent-2);
   border-radius: 7px;
-  display: flex;
-  font-weight: 800;
+  display: block;
   height: 42px;
-  justify-content: center;
+  object-fit: contain;
   width: 42px;
 }
 
