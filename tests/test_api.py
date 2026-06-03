@@ -187,6 +187,32 @@ def test_logout_revokes_password_session(monkeypatch) -> None:
     assert sites_response.status_code == 401
 
 
+def test_session_admin_can_list_and_revoke_sessions(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post(
+        "/access/users",
+        json={
+            "username": "session.admin",
+            "display_name": "Session Admin",
+            "email": "session.admin@example.com",
+            "roles": ["Platform Admin"],
+            "status": "active",
+            "password": "StrataOneSession123!",
+        },
+    )
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    token = client.post("/auth/login", json={"username": "session.admin", "password": "StrataOneSession123!"}).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    sessions = client.get("/auth/sessions", headers=headers).json()["sessions"]
+    session = next(item for item in sessions if item["username"] == "session.admin")
+    revoked = client.delete(f"/auth/sessions/{session['id']}", headers=headers)
+
+    assert session["token_fingerprint"]
+    assert revoked.status_code == 200
+    assert revoked.json()["revoked"] is True
+
+
 def test_audit_provider_config_and_job_events() -> None:
     client = TestClient(app)
 
@@ -199,6 +225,34 @@ def test_audit_provider_config_and_job_events() -> None:
     assert config_response.json()["config"]["endpoint_mode"] == "redfish"
     assert audit_response.status_code == 200
     assert "audit" in audit_response.json()
+
+
+def test_provider_test_endpoint_reports_configuration_state() -> None:
+    client = TestClient(app)
+
+    response = client.post("/providers/generic-redfish/test")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "generic-redfish"
+    assert any(check["name"] == "provider_registered" for check in response.json()["checks"])
+
+
+def test_approval_can_be_rejected() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+
+    requested = client.post(
+        "/sites/branch-001/jobs/mount-iso",
+        json={"iso_url": "https://repo.example.com/azure-local.iso", "boot_once": True},
+    )
+    approval_id = requested.json()["approval_id"]
+    rejected = client.post(f"/approvals/{approval_id}/reject", json={"reason": "maintenance window closed"})
+
+    assert requested.json()["status"] == "approval-required"
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    assert rejected.json()["detail"]["rejection_reason"] == "maintenance window closed"
 
 
 def test_provider_api_creates_custom_provider() -> None:

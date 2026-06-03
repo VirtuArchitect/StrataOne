@@ -99,6 +99,13 @@ class ProviderConfigRecord(BaseModel):
     updated_at: str
 
 
+class SessionRecord(BaseModel):
+    token_hash: str
+    username: str
+    created_at: str
+    expires_at: str
+
+
 class MigrationRecord(BaseModel):
     version: str
     applied_at: str
@@ -641,6 +648,19 @@ class StrataStore:
             result = conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
         return result.rowcount > 0
 
+    def list_sessions(self) -> list[SessionRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
+        return [
+            SessionRecord(
+                token_hash=row["token_hash"],
+                username=row["username"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+            )
+            for row in rows
+        ]
+
     def add_audit(self, actor: str, action: str, resource: str, detail: dict[str, Any] | None = None) -> AuditRecord:
         audit_id = str(uuid.uuid4())
         now = _now()
@@ -674,6 +694,18 @@ class StrataStore:
             conn.execute(
                 "UPDATE approvals SET status = ?, approved_by = ?, updated_at = ? WHERE id = ?",
                 ("approved", approved_by, _now(), approval_id),
+            )
+        return self.get_approval(approval_id)
+
+    def reject(self, approval_id: str, rejected_by: str, reason: str = "") -> ApprovalRecord | None:
+        approval = self.get_approval(approval_id)
+        if approval is None:
+            return None
+        detail = {**approval.detail, "rejection_reason": reason}
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE approvals SET status = ?, approved_by = ?, detail_json = ?, updated_at = ? WHERE id = ?",
+                ("rejected", rejected_by, json.dumps(detail), _now(), approval_id),
             )
         return self.get_approval(approval_id)
 

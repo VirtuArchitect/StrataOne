@@ -29,6 +29,7 @@
           <button class="nav-item" data-view="artifacts">Artifacts</button>
           <span class="nav-group">Execute</span>
           <button class="nav-item" data-view="jobs">Orchestration Runs</button>
+          <button class="nav-item" data-view="approvals">Approvals</button>
           <button class="nav-item" data-view="lifecycle">Lifecycle</button>
           <span class="nav-group">Admin</span>
           <button class="nav-item" data-view="settings">Settings</button>
@@ -208,6 +209,7 @@
               </div>
 
               <div class="wizard-page" data-page="review" hidden>
+                <div class="readiness-panel" id="deploymentReadiness"></div>
                 <div class="review-actions">
                   <button id="generateDesiredState">Generate Desired State</button>
                   <button id="saveGeneratedDeployment">Save Deployment</button>
@@ -319,14 +321,56 @@
         </section>
 
         <section class="view" id="view-jobs" hidden>
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <h2>Job History</h2>
-                <span>Tracked orchestration activity</span>
+          <div class="layout-grid">
+            <div class="panel span-5">
+              <div class="panel-header">
+                <div>
+                  <h2>Job History</h2>
+                  <span>Tracked orchestration activity</span>
+                </div>
               </div>
+              <div class="job-list" id="jobsList"></div>
             </div>
-            <div class="job-list" id="jobsList"></div>
+            <div class="panel span-7">
+              <div class="panel-header">
+                <div>
+                  <h2>Run Detail</h2>
+                  <span id="jobDetailSubtitle">Select a run to inspect stages, events, and retry options</span>
+                </div>
+                <div class="button-row">
+                  <button class="secondary" id="refreshJobDetail">Refresh Events</button>
+                </div>
+              </div>
+              <div class="job-detail" id="jobDetail"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-approvals" hidden>
+          <div class="layout-grid">
+            <div class="panel span-7">
+              <div class="panel-header">
+                <div>
+                  <h2>Approval Queue</h2>
+                  <span>Live provider and deployment actions waiting for operator approval</span>
+                </div>
+                <button class="secondary" id="refreshApprovals">Refresh</button>
+              </div>
+              <div class="job-list" id="approvalsList"></div>
+            </div>
+            <div class="panel span-5">
+              <div class="panel-header">
+                <div>
+                  <h2>Approval Policy</h2>
+                  <span>Live actions are blocked until approved</span>
+                </div>
+              </div>
+              <ol class="flow-list">
+                <li><strong>Request</strong><span>Live or high-impact actions create a pending approval.</span></li>
+                <li><strong>Review</strong><span>Operators inspect site, action, parameters, and audit context.</span></li>
+                <li><strong>Approve or reject</strong><span>Approved runs can be resubmitted with the approval id.</span></li>
+              </ol>
+            </div>
           </div>
         </section>
 
@@ -453,6 +497,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-authfix1"></script>
+    <script src="./app.js?v=20260603-features1"></script>
   </body>
 </html>

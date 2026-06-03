@@ -70,6 +70,10 @@ class ProviderConfigPayload(BaseModel):
     config: dict[str, Any]
 
 
+class ApprovalDecisionPayload(BaseModel):
+    reason: str = ""
+
+
 store = StrataStore()
 jobs = JobRunner(store)
 
@@ -164,6 +168,29 @@ def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
     return {"revoked": revoked}
 
 
+@app.get("/auth/sessions")
+def list_sessions(_: Any = manage_access) -> dict[str, Any]:
+    return {
+        "sessions": [
+            {
+                "id": session.token_hash,
+                "token_fingerprint": session.token_hash[:12],
+                "username": session.username,
+                "created_at": session.created_at,
+                "expires_at": session.expires_at,
+            }
+            for session in store.list_sessions()
+        ]
+    }
+
+
+@app.delete("/auth/sessions/{session_id}")
+def revoke_session(session_id: str, context: AuthContext = Depends(require_permission("manage-access", store))) -> dict[str, bool]:
+    revoked = store.revoke_session(session_id)
+    store.add_audit(context.username, "session.revoke", f"session:{session_id[:12]}", {"revoked": revoked})
+    return {"revoked": revoked}
+
+
 @app.get("/sites/example")
 def example_site(_: Any = read_sites) -> dict[str, Any]:
     try:
@@ -244,6 +271,27 @@ def save_provider_config(provider_name: str, payload: ProviderConfigPayload, _: 
     config = store.upsert_provider_config(provider_name, payload.config)
     store.add_audit("api", "provider.config.upsert", f"provider:{provider_name}", payload.config)
     return config.model_dump(mode="json")
+
+
+@app.post("/providers/{provider_name}/test")
+def test_provider(provider_name: str, context: AuthContext = Depends(require_permission("manage-providers", store))) -> dict[str, Any]:
+    provider = next((item for item in list_providers() if item.name == provider_name), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+    config = store.get_provider_config(provider_name)
+    live_redfish = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
+    result = {
+        "provider": provider_name,
+        "type": provider.type,
+        "status": "ready" if config else "configuration-required",
+        "checks": [
+            {"name": "provider_registered", "status": "passed"},
+            {"name": "configuration_present", "status": "passed" if config else "warning"},
+            {"name": "live_execution_enabled", "status": "passed" if live_redfish else "warning"},
+        ],
+    }
+    store.add_audit(context.username, "provider.test", f"provider:{provider_name}", result)
+    return result
 
 
 @app.get("/settings")
@@ -478,6 +526,15 @@ def approve_request(approval_id: str, context: AuthContext = Depends(require_per
     if approval is None:
         raise HTTPException(status_code=404, detail="approval not found")
     store.add_audit(context.username, "approval.approved", f"approval:{approval_id}", approval.model_dump(mode="json"))
+    return approval.model_dump(mode="json")
+
+
+@app.post("/approvals/{approval_id}/reject")
+def reject_request(approval_id: str, payload: ApprovalDecisionPayload | None = None, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
+    approval = store.reject(approval_id, context.username, payload.reason if payload else "")
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    store.add_audit(context.username, "approval.rejected", f"approval:{approval_id}", approval.model_dump(mode="json"))
     return approval.model_dump(mode="json")
 
 

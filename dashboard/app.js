@@ -6,8 +6,12 @@ const state = {
   sites: [],
   jobs: [],
   providers: [],
+  approvals: [],
+  audit: [],
+  sessions: [],
   settings: null,
   inventory: null,
+  selectedJobId: null,
   selectedSite: null,
   selectedHardware: "generic-redfish",
   selectedPlatform: "azure-local",
@@ -33,6 +37,9 @@ const els = {
   sitesTable: document.querySelector("#sitesTable"),
   jobsList: document.querySelector("#jobsList"),
   overviewJobs: document.querySelector("#overviewJobs"),
+  approvalsList: document.querySelector("#approvalsList"),
+  jobDetail: document.querySelector("#jobDetail"),
+  jobDetailSubtitle: document.querySelector("#jobDetailSubtitle"),
   providerList: document.querySelector("#providerList"),
   nodeList: document.querySelector("#nodeList"),
   lifecycleGrid: document.querySelector("#lifecycleGrid"),
@@ -55,6 +62,7 @@ const els = {
   siteActionStatus: document.querySelector("#siteActionStatus"),
   fleetStrip: document.querySelector("#fleetStrip"),
   deploymentSummary: document.querySelector("#deploymentSummary"),
+  deploymentReadiness: document.querySelector("#deploymentReadiness"),
   bmcUsername: document.querySelector("#bmcUsername"),
   bmcPassword: document.querySelector("#bmcPassword"),
   bmcInsecure: document.querySelector("#bmcInsecure"),
@@ -71,6 +79,7 @@ const viewCopy = {
   deployments: ["Deployments", "Create deployments and generate desired state for hardware and hypervisor targets."],
   sites: ["Sites", "Manage registered site definitions and run operational actions."],
   jobs: ["Jobs", "Inspect queued, running, failed, and completed orchestration jobs."],
+  approvals: ["Approvals", "Review and approve live infrastructure actions before execution."],
   providers: ["Providers", "Review available hardware and platform providers."],
   artifacts: ["Artifacts", "Generate and inspect deployment bundles for selected sites."],
   lifecycle: ["Lifecycle", "Plan Day-2 controls such as drift, updates, and node replacement."],
@@ -143,6 +152,8 @@ function wireEvents() {
     button.addEventListener("click", () => selectChoice("platform", button.dataset.platform));
   });
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
+  document.querySelector("#refreshApprovals").addEventListener("click", loadApprovals);
+  document.querySelector("#refreshJobDetail").addEventListener("click", refreshSelectedJobDetail);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
   document.querySelector("#logoutButton").addEventListener("click", toggleAuthSession);
@@ -253,7 +264,7 @@ function selectChoice(type, value) {
 async function refreshAll() {
   await checkApi();
   try {
-    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadSettings()]);
+    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings()]);
   } catch (error) {
     if (isAuthError(error)) {
       renderAuthRequired();
@@ -306,9 +317,26 @@ async function loadProviders() {
   renderProviders();
 }
 
+async function loadApprovals() {
+  const data = await apiGet("/approvals");
+  state.approvals = data.approvals || [];
+  renderApprovals();
+}
+
+async function loadAudit() {
+  const data = await apiGet("/audit?limit=50");
+  state.audit = data.audit || [];
+}
+
+async function loadSessions() {
+  const data = await apiGet("/auth/sessions");
+  state.sessions = data.sessions || [];
+}
+
 async function loadSettings() {
   try {
-    state.settings = await apiGet("/settings");
+    const [settings] = await Promise.all([apiGet("/settings"), loadAudit(), loadSessions()]);
+    state.settings = settings;
     showSettingsSection(activeSettingsSection());
   } catch (error) {
     if (isAuthError(error)) {
@@ -486,6 +514,7 @@ function renderJobs() {
       if (job.action === "artifacts" && job.result) renderArtifactResult(job.result);
     });
   });
+  if (state.selectedJobId) refreshSelectedJobDetail();
 }
 
 function jobItem(job) {
@@ -498,6 +527,75 @@ function jobItem(job) {
       <button class="mini secondary" data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
     </div>
   `;
+}
+
+async function openJobDetail(jobId) {
+  state.selectedJobId = jobId;
+  const [job, events] = await Promise.all([
+    apiGet(`/jobs/${encodeURIComponent(jobId)}`),
+    apiGet(`/jobs/${encodeURIComponent(jobId)}/events`),
+  ]);
+  renderJobDetail(job, events.events || []);
+  writeResult(`${job.action} ${job.status}`, job);
+}
+
+async function refreshSelectedJobDetail() {
+  if (!state.selectedJobId || !els.jobDetail) return;
+  try {
+    await openJobDetail(state.selectedJobId);
+  } catch (error) {
+    els.jobDetail.innerHTML = `<div class="settings-empty">Run detail unavailable: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderJobDetail(job, events) {
+  if (!els.jobDetail) return;
+  els.jobDetailSubtitle.textContent = `${job.site_name} - ${job.action} - ${job.status}`;
+  const timeline = jobTimeline(job, events);
+  els.jobDetail.innerHTML = `
+    <div class="settings-grid detail-metrics">
+      ${settingCard("Status", job.status)}
+      ${settingCard("Site", job.site_name)}
+      ${settingCard("Action", job.action)}
+      ${settingCard("Started", formatDate(job.started_at || job.created_at))}
+      ${settingCard("Finished", formatDate(job.finished_at))}
+      ${settingCard("Events", events.length)}
+    </div>
+    <div class="button-row detail-actions">
+      <button data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
+      <button class="secondary" data-copy-job-result="${escapeHtml(job.id)}">Inspect Result</button>
+    </div>
+    <div class="timeline">
+      ${timeline.map((item) => `
+        <div class="timeline-row ${escapeHtml(item.status)}">
+          <span></span>
+          <div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <small>${escapeHtml(item.detail)}</small>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    <h3>Event Stream</h3>
+    <div class="event-list">
+      ${events.map((event) => `
+        <div class="event-row ${escapeHtml(event.level)}">
+          <strong>${escapeHtml(event.message)}</strong>
+          <span>${formatDate(event.created_at)} - ${escapeHtml(JSON.stringify(event.detail || {}))}</span>
+        </div>
+      `).join("") || `<div class="settings-empty">No events recorded yet.</div>`}
+    </div>
+  `;
+}
+
+function jobTimeline(job, events) {
+  const has = (text) => events.some((event) => event.message.toLowerCase().includes(text));
+  return [
+    { title: "Queued", detail: formatDate(job.created_at), status: "done" },
+    { title: "Started", detail: job.started_at ? formatDate(job.started_at) : "Waiting for worker", status: job.started_at ? "done" : "pending" },
+    { title: "Provider execution", detail: has("completed") || has("failed") ? "Provider contract executed" : "Awaiting provider result", status: job.status === "failed" ? "failed" : job.result ? "done" : "pending" },
+    { title: "Completed", detail: job.finished_at ? formatDate(job.finished_at) : "Still running", status: job.status === "failed" ? "failed" : job.status === "succeeded" ? "done" : "pending" },
+  ];
 }
 
 async function loadInventory() {
@@ -545,6 +643,25 @@ function renderProviders() {
       </div>
     </div>
   `).join("");
+}
+
+function renderApprovals() {
+  if (!els.approvalsList) return;
+  els.approvalsList.innerHTML = state.approvals.map((approval) => `
+    <div class="list-item approval-card">
+      <div>
+        <strong>${escapeHtml(approval.action)} <span class="badge">${escapeHtml(approval.status)}</span></strong>
+        <span>${escapeHtml(approval.site_name)} - requested by ${escapeHtml(approval.requested_by)} - ${formatDate(approval.created_at)}</span>
+        <span>${escapeHtml(JSON.stringify(approval.detail || {}))}</span>
+      </div>
+      <div class="row-actions">
+        ${approval.status === "pending" ? `
+          <button class="mini" data-approve="${escapeHtml(approval.id)}">Approve</button>
+          <button class="mini danger" data-reject="${escapeHtml(approval.id)}">Reject</button>
+        ` : `<button class="mini secondary" disabled>${escapeHtml(approval.status)}</button>`}
+      </div>
+    </div>
+  `).join("") || `<div class="list-item"><strong>No pending approvals</strong><span>Live actions that require approval will appear here.</span></div>`;
 }
 
 function renderNodeEditor() {
@@ -689,6 +806,18 @@ function renderSettingsSection(section, data) {
           </div>
         `).join("")}
       </div>
+      <h3>Active Sessions</h3>
+      <div class="settings-list">
+        ${state.sessions.map((session) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(session.username)} <span class="badge">${escapeHtml(session.token_fingerprint)}</span></strong>
+              <span>Created ${formatDate(session.created_at)} - expires ${formatDate(session.expires_at)}</span>
+            </div>
+            <button class="mini danger" data-revoke-session="${escapeHtml(session.id)}">Revoke</button>
+          </div>
+        `).join("") || `<div class="settings-empty">No active sessions.</div>`}
+      </div>
     `;
   }
   if (section === "providers") {
@@ -702,6 +831,26 @@ function renderSettingsSection(section, data) {
       <div class="settings-list">${(data.hardware || []).map(providerRow).join("")}</div>
       <h3>Platform</h3>
       <div class="settings-list">${(data.platform || []).map(providerRow).join("")}</div>
+    `;
+  }
+  if (section === "audit") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("Audit Events", state.audit.length)}
+        ${settingCard("Tracking", data.configuration_change_tracking)}
+        ${settingCard("Retention", `${data.job_history_retention_days} days`)}
+      </div>
+      <div class="settings-list">
+        ${state.audit.map((item) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(item.action)} <span class="badge">${escapeHtml(item.actor)}</span></strong>
+              <span>${escapeHtml(item.resource)} - ${formatDate(item.created_at)}</span>
+              <span>${escapeHtml(JSON.stringify(item.detail || {}))}</span>
+            </div>
+          </div>
+        `).join("") || `<div class="settings-empty">No audit events recorded.</div>`}
+      </div>
     `;
   }
   return `<div class="settings-grid">${Object.entries(data).map(([key, value]) => settingCard(labelize(key), formatSettingValue(value))).join("")}</div>`;
@@ -726,15 +875,33 @@ function showSettingsEditor(section) {
 async function handleDocumentActions(event) {
   const openJob = event.target.closest("[data-open-job]");
   if (openJob) {
-    const job = await apiGet(`/jobs/${encodeURIComponent(openJob.dataset.openJob)}`);
-    writeResult(`${job.action} ${job.status}`, job);
-    if (job.action === "artifacts" && job.result) renderArtifactResult(job.result);
+    await openJobDetail(openJob.dataset.openJob);
+    return;
+  }
+  const copyJobResult = event.target.closest("[data-copy-job-result]");
+  if (copyJobResult) {
+    const job = await apiGet(`/jobs/${encodeURIComponent(copyJobResult.dataset.copyJobResult)}`);
+    writeResult(`${job.action} result`, job.result || { status: job.status, error: job.error });
     return;
   }
   const rerunJob = event.target.closest("[data-rerun-job]");
   if (rerunJob) {
     const job = state.jobs.find((item) => item.id === rerunJob.dataset.rerunJob) || await apiGet(`/jobs/${encodeURIComponent(rerunJob.dataset.rerunJob)}`);
     await runJob(job.action, job.site_name);
+    return;
+  }
+  const approve = event.target.closest("[data-approve]");
+  if (approve) {
+    const result = await apiPost(`/approvals/${encodeURIComponent(approve.dataset.approve)}/approve`, {});
+    writeResult("approval approved", result);
+    await loadApprovals();
+    return;
+  }
+  const reject = event.target.closest("[data-reject]");
+  if (reject) {
+    const result = await apiPost(`/approvals/${encodeURIComponent(reject.dataset.reject)}/reject`, { reason: "Rejected from dashboard" });
+    writeResult("approval rejected", result);
+    await loadApprovals();
     return;
   }
   const removeNode = event.target.closest("[data-remove-node]");
@@ -759,6 +926,12 @@ async function handleDocumentActions(event) {
   const providerDetail = event.target.closest("[data-provider-detail]");
   if (providerDetail) {
     await showProviderDetail(providerDetail.dataset.providerDetail);
+    return;
+  }
+  const testProvider = event.target.closest("[data-test-provider]");
+  if (testProvider) {
+    const result = await apiPost(`/providers/${encodeURIComponent(testProvider.dataset.testProvider)}/test`, {});
+    writeResult("provider test", result);
     return;
   }
   const editProvider = event.target.closest("[data-edit-provider]");
@@ -818,6 +991,13 @@ async function handleDocumentActions(event) {
   const deleteUser = event.target.closest("[data-delete-user]");
   if (deleteUser) {
     await apiDelete(`/access/users/${encodeURIComponent(deleteUser.dataset.deleteUser)}`);
+    await loadSettings();
+    return;
+  }
+  const revokeSession = event.target.closest("[data-revoke-session]");
+  if (revokeSession) {
+    const result = await apiDelete(`/auth/sessions/${encodeURIComponent(revokeSession.dataset.revokeSession)}`);
+    writeResult("session revoked", result);
     await loadSettings();
     return;
   }
@@ -923,8 +1103,14 @@ async function showProviderDetail(providerName) {
     ${settingCard("Type", detail.provider.type)}
     ${settingCard("Source", detail.provider.source)}
     ${settingCard("Support", detail.provider.vendor_supported ? "vendor supported" : "community")}
+    ${settingCard("Config", detail.config ? "configured" : "not configured")}
   `;
   document.querySelector("#providerConfigJson").value = JSON.stringify(detail.config?.config || {}, null, 2);
+  if (!form.querySelector("[data-test-provider]")) {
+    form.querySelector(".button-row").insertAdjacentHTML("afterbegin", `<button class="secondary" type="button" data-test-provider="${escapeHtml(providerName)}">Test Provider</button>`);
+  } else {
+    form.querySelector("[data-test-provider]").dataset.testProvider = providerName;
+  }
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -988,6 +1174,8 @@ function deploymentSpecFromForm() {
 }
 
 function renderDeploymentSummary(spec) {
+  const issues = validateDeploymentSpec(spec);
+  renderDeploymentReadiness(issues);
   els.deploymentSummary.textContent = JSON.stringify({
     site: spec.site.name,
     hardware: spec.hardware.vendor,
@@ -996,6 +1184,61 @@ function renderDeploymentSummary(spec) {
     nodes: spec.hardware.nodes.length,
     workloads: Object.entries(spec.workloads).filter(([, enabled]) => enabled).map(([name]) => name),
   }, null, 2);
+}
+
+function validateDeploymentSpec(spec) {
+  const issues = [];
+  const requiredText = [
+    ["Site name", spec.site.name],
+    ["Location", spec.site.location],
+    ["Cluster name", spec.platform.cluster_name],
+    ["Topology", spec.platform.topology],
+  ];
+  requiredText.forEach(([label, value]) => {
+    if (!String(value || "").trim()) issues.push(`${label} is required.`);
+  });
+  if (!spec.hardware.nodes.length) issues.push("At least one deployment node is required.");
+  const serials = new Set();
+  spec.hardware.nodes.forEach((node, index) => {
+    if (!node.serial) issues.push(`Node ${index + 1} serial is required.`);
+    if (node.serial && serials.has(node.serial)) issues.push(`Node serial ${node.serial} is duplicated.`);
+    serials.add(node.serial);
+    if (!isIpv4(node.bmc_ip)) issues.push(`Node ${index + 1} BMC IP must be a valid IPv4 address.`);
+  });
+  ["management_vlan", "storage_vlan", "vm_vlan"].forEach((key) => {
+    const value = spec.network[key];
+    if (!Number.isInteger(value) || value < 1 || value > 4094) issues.push(`${labelize(key)} must be between 1 and 4094.`);
+  });
+  [...spec.network.dns_servers, ...spec.network.ntp_servers].forEach((entry) => {
+    if (!entry) issues.push("DNS and NTP entries cannot be empty.");
+  });
+  if (spec.platform.type === "azure-local") {
+    if (!isGuid(spec.platform.azure.subscription_id)) issues.push("Azure Subscription must be a GUID.");
+    if (!isGuid(spec.platform.azure.tenant_id)) issues.push("Azure Tenant must be a GUID.");
+    if (!spec.platform.azure.resource_group) issues.push("Azure Resource Group is required.");
+    if (!spec.platform.azure.region) issues.push("Azure Region is required.");
+  }
+  return issues;
+}
+
+function renderDeploymentReadiness(issues) {
+  if (!els.deploymentReadiness) return;
+  const ready = issues.length === 0;
+  els.deploymentReadiness.className = `readiness-panel ${ready ? "ready" : "blocked"}`;
+  els.deploymentReadiness.innerHTML = ready
+    ? `<strong>Ready for save and plan</strong><span>Required site, node, network, and platform fields are complete.</span>`
+    : `<strong>${issues.length} readiness issue${issues.length === 1 ? "" : "s"}</strong><ul>${issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul>`;
+  document.querySelector("#saveGeneratedDeployment").disabled = !ready;
+  document.querySelector("#saveAndPlanDeployment").disabled = !ready;
+}
+
+function isIpv4(value) {
+  const parts = String(value || "").split(".");
+  return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
+}
+
+function isGuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
 function hydrateDeploymentForm(spec) {

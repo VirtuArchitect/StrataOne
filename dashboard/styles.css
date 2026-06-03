@@ -532,6 +532,40 @@ input[type="checkbox"]:focus {
   margin-bottom: 14px;
 }
 
+.readiness-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.readiness-panel strong,
+.readiness-panel span {
+  display: block;
+}
+
+.readiness-panel span,
+.readiness-panel li {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.readiness-panel ul {
+  margin: 8px 0 0 18px;
+  padding: 0;
+}
+
+.readiness-panel.ready {
+  background: rgba(68, 212, 164, 0.08);
+  border-color: rgba(68, 212, 164, 0.42);
+}
+
+.readiness-panel.blocked {
+  background: rgba(245, 206, 66, 0.08);
+  border-color: rgba(245, 206, 66, 0.36);
+}
+
 .review-summary {
   background: #0b0f1e;
   border-radius: 7px;
@@ -650,7 +684,8 @@ textarea {
 }
 
 .provider-card,
-.job-item {
+.job-item,
+.approval-card {
   align-items: center;
   display: flex;
   justify-content: space-between;
@@ -683,6 +718,71 @@ textarea {
 .status-succeeded { color: var(--ok); }
 .status-running, .status-queued { color: var(--warn); }
 .status-failed { color: var(--fail); }
+
+.job-detail {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.detail-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detail-actions {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.timeline,
+.event-list {
+  display: grid;
+  gap: 8px;
+}
+
+.timeline-row {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.timeline-row > span {
+  background: var(--line-strong);
+  border-radius: 50%;
+  height: 10px;
+  margin-top: 4px;
+  width: 10px;
+}
+
+.timeline-row.done > span { background: var(--ok); }
+.timeline-row.failed > span { background: var(--fail); }
+.timeline-row.pending > span { background: var(--warn); }
+
+.timeline-row strong,
+.event-row strong {
+  display: block;
+  font-size: 13px;
+}
+
+.timeline-row small,
+.event-row span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.event-row {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.event-row.error { border-color: rgba(255, 107, 122, 0.42); }
+.event-row.warning { border-color: rgba(245, 206, 66, 0.38); }
 
 .fleet-strip,
 .lifecycle-grid {
