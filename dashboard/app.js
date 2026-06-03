@@ -654,8 +654,10 @@ function renderJobDetail(job, events) {
     </div>
     <div class="button-row detail-actions">
       <button data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
+      ${["failed", "canceled"].includes(job.status) ? `<button data-resume-job="${escapeHtml(job.id)}">Resume</button>` : ""}
       ${["queued", "running"].includes(job.status) ? `<button class="danger" data-cancel-job="${escapeHtml(job.id)}">Cancel</button>` : ""}
       <button class="secondary" data-copy-job-result="${escapeHtml(job.id)}">Inspect Result</button>
+      <button class="secondary" data-job-report="${escapeHtml(job.id)}">Export Report</button>
     </div>
     <div class="timeline">
       ${timeline.map((item) => `
@@ -1064,7 +1066,8 @@ function renderApprovals() {
       <div>
         <strong>${escapeHtml(approval.action)} <span class="badge">${escapeHtml(approval.status)}</span></strong>
         <span>${escapeHtml(approval.site_name)} - requested by ${escapeHtml(approval.requested_by)} - ${formatDate(approval.created_at)}</span>
-        <span>${escapeHtml(JSON.stringify(approval.detail || {}))}</span>
+        <span>${escapeHtml(approval.detail?.reason || JSON.stringify(approval.detail || {}))}</span>
+        <span>${escapeHtml((approval.votes || []).length)} of ${escapeHtml(approval.required_approvals || 1)} approval(s) recorded${approval.expires_at ? ` - expires ${escapeHtml(formatDate(approval.expires_at))}` : ""}</span>
       </div>
       <div class="row-actions">
         ${approval.status === "pending" ? `
@@ -1401,6 +1404,19 @@ async function handleDocumentActions(event) {
     await loadJobs();
     return;
   }
+  const resumeJob = event.target.closest("[data-resume-job]");
+  if (resumeJob) {
+    const result = await apiPost(`/jobs/${encodeURIComponent(resumeJob.dataset.resumeJob)}/resume`, {});
+    writeResult("job resume queued", result);
+    await loadJobs();
+    return;
+  }
+  const jobReport = event.target.closest("[data-job-report]");
+  if (jobReport) {
+    const result = await apiGet(`/jobs/${encodeURIComponent(jobReport.dataset.jobReport)}/report`);
+    writeResult("job execution report", result);
+    return;
+  }
   const cancelJob = event.target.closest("[data-cancel-job]");
   if (cancelJob) {
     const result = await apiPost(`/jobs/${encodeURIComponent(cancelJob.dataset.cancelJob)}/cancel`, {});
@@ -1460,6 +1476,20 @@ async function handleDocumentActions(event) {
   if (testProvider) {
     const result = await apiPost(`/providers/${encodeURIComponent(testProvider.dataset.testProvider)}/test`, {});
     writeResult("provider test", result);
+    return;
+  }
+  const addProviderValidation = event.target.closest("[data-provider-validation]");
+  if (addProviderValidation) {
+    const providerName = addProviderValidation.dataset.providerValidation;
+    const result = await apiPost(`/providers/${encodeURIComponent(providerName)}/validation`, {
+      operation: value("#providerValidationOperation") || "redfish-virtual-media",
+      status: value("#providerValidationStatus") || "validated",
+      lab: value("#providerValidationLab") || null,
+      evidence: value("#providerValidationEvidence") || null,
+      notes: value("#providerValidationNotes") || null,
+    });
+    writeResult("provider validation recorded", result);
+    await showProviderDetail(providerName);
     return;
   }
   const editProvider = event.target.closest("[data-edit-provider]");
@@ -1794,8 +1824,45 @@ async function showProviderDetail(providerName) {
     ${settingCard("Source", detail.provider.source)}
     ${settingCard("Support", detail.provider.vendor_supported ? "vendor supported" : "community")}
     ${settingCard("Config", detail.config ? "configured" : "not configured")}
+    ${settingCard("Validation Records", (detail.validation || []).length)}
   `;
   document.querySelector("#providerConfigJson").value = JSON.stringify(detail.config?.config || detail.template || {}, null, 2);
+  const validationHtml = `
+    <div class="provider-validation">
+      <h3>Lab Validation Evidence</h3>
+      <div class="form-grid">
+        <label>Operation<input id="providerValidationOperation" value="redfish-virtual-media" /></label>
+        <label>Status
+          <select id="providerValidationStatus">
+            <option value="validated">Validated</option>
+            <option value="pending">Pending</option>
+            <option value="failed">Failed</option>
+            <option value="not-validated">Not validated</option>
+          </select>
+        </label>
+        <label>Lab<input id="providerValidationLab" placeholder="Integration lab or customer site" /></label>
+        <label>Evidence<input id="providerValidationEvidence" placeholder="Runbook, ticket, report, or URL" /></label>
+      </div>
+      <label>Notes<input id="providerValidationNotes" placeholder="Firmware, model, and validation notes" /></label>
+      <div class="button-row">
+        <button class="secondary" type="button" data-provider-validation="${escapeHtml(providerName)}">Record Validation</button>
+      </div>
+      <div class="settings-list">
+        ${(detail.validation || []).map((item) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(item.operation)} <span class="badge">${escapeHtml(item.status)}</span></strong>
+              <span>${escapeHtml(item.lab || "No lab")} - ${formatDate(item.created_at)}</span>
+              <span>${escapeHtml(item.evidence || item.notes || "No evidence notes")}</span>
+            </div>
+          </div>
+        `).join("") || `<div class="settings-empty">No provider validation evidence recorded.</div>`}
+      </div>
+    </div>
+  `;
+  let validationPanel = form.querySelector(".provider-validation");
+  if (validationPanel) validationPanel.remove();
+  form.querySelector("#providerConfigJson").insertAdjacentHTML("afterend", validationHtml);
   if (!form.querySelector("[data-test-provider]")) {
     form.querySelector(".button-row").insertAdjacentHTML("afterbegin", `<button class="secondary" type="button" data-test-provider="${escapeHtml(providerName)}">Test Provider</button>`);
   } else {

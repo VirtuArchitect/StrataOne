@@ -16,6 +16,10 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 - Credential references in jobs, executable discovery plans, ISO registry, ISO eject, and job cancel/retry controls.
 - Vendor mark badges beside provider names across catalog, matrix, settings, and detail views.
 - Discovery import into managed sites, ISO reachability validation, secret reference testing, and configurable approval policy rules.
+- Approval votes with minimum approval counts, approver role checks, expiry metadata, and approval reasons.
+- Job execution reports, failed/canceled job resume, richer lifecycle stage events, and drift diff output.
+- Provider lab-validation evidence records surfaced in provider details and settings.
+- Field installation guide and user guide for enterprise preview deployments.
 
 ### Fixed
 

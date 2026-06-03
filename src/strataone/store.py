@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -80,6 +80,10 @@ class ApprovalRecord(BaseModel):
     requested_by: str
     approved_by: str | None = None
     detail: dict[str, Any] = {}
+    votes: list[dict[str, Any]] = []
+    required_approvals: int = 1
+    approver_roles: list[str] = []
+    expires_at: str | None = None
     created_at: str
     updated_at: str
 
@@ -108,6 +112,17 @@ class ProviderConfigRecord(BaseModel):
     provider_name: str
     config: dict[str, Any]
     updated_at: str
+
+
+class ProviderValidationRecord(BaseModel):
+    id: str
+    provider_name: str
+    operation: str
+    status: str
+    lab: str | None = None
+    evidence: str | None = None
+    notes: str | None = None
+    created_at: str
 
 
 class SecretRefRecord(BaseModel):
@@ -300,6 +315,10 @@ class StrataStore:
                     requested_by TEXT NOT NULL,
                     approved_by TEXT,
                     detail_json TEXT NOT NULL,
+                    votes_json TEXT NOT NULL DEFAULT '[]',
+                    required_approvals INTEGER NOT NULL DEFAULT 1,
+                    approver_roles_json TEXT NOT NULL DEFAULT '[]',
+                    expires_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -337,6 +356,20 @@ class StrataStore:
                     provider_name TEXT PRIMARY KEY,
                     config_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_validation (
+                    id TEXT PRIMARY KEY,
+                    provider_name TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    lab TEXT,
+                    evidence TEXT,
+                    notes TEXT,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -391,8 +424,16 @@ class StrataStore:
             if self.backend == "sqlite":
                 self._ensure_column(conn, "jobs", "params_json", "TEXT")
                 self._ensure_column(conn, "users", "password_hash", "TEXT")
+                self._ensure_column(conn, "approvals", "votes_json", "TEXT NOT NULL DEFAULT '[]'")
+                self._ensure_column(conn, "approvals", "required_approvals", "INTEGER NOT NULL DEFAULT 1")
+                self._ensure_column(conn, "approvals", "approver_roles_json", "TEXT NOT NULL DEFAULT '[]'")
+                self._ensure_column(conn, "approvals", "expires_at", "TEXT")
             if self.backend == "postgres":
                 conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
+                conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS votes_json TEXT NOT NULL DEFAULT '[]'")
+                conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS required_approvals INTEGER NOT NULL DEFAULT 1")
+                conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approver_roles_json TEXT NOT NULL DEFAULT '[]'")
+                conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS expires_at TEXT")
         self.apply_migrations()
         self.seed_access_defaults()
 
@@ -403,6 +444,7 @@ class StrataStore:
             ("003_secrets_discovery", "Secret references and discovery run history"),
             ("004_iso_job_controls", "ISO registry and operator job control primitives"),
             ("005_approval_policy", "Configurable approval policy rules"),
+            ("006_approval_votes_provider_validation", "Approval votes and provider validation evidence"),
         ]
         applied = {item.version for item in self.list_migrations()}
         with self._connect() as conn:
@@ -624,6 +666,7 @@ class StrataStore:
                     "manage-settings",
                     "manage-access",
                     "read-audit",
+                    "export-reports",
                     "worker-execute",
                 ],
                 built_in=True,
@@ -798,26 +841,81 @@ class StrataStore:
             rows = conn.execute("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._audit_from_row(row) for row in rows]
 
-    def create_approval(self, site_name: str, action: str, requested_by: str, detail: dict[str, Any] | None = None) -> ApprovalRecord:
+    def create_approval(
+        self,
+        site_name: str,
+        action: str,
+        requested_by: str,
+        detail: dict[str, Any] | None = None,
+        *,
+        required_approvals: int = 1,
+        approver_roles: list[str] | None = None,
+        expires_minutes: int | None = None,
+    ) -> ApprovalRecord:
         approval_id = str(uuid.uuid4())
         now = _now()
+        expires_at = (datetime.now(UTC) + timedelta(minutes=max(1, expires_minutes))).isoformat() if expires_minutes else None
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO approvals (id, site_name, action, status, requested_by, detail_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO approvals (id, site_name, action, status, requested_by, detail_json, votes_json, required_approvals, approver_roles_json, expires_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (approval_id, site_name, action, "pending", requested_by, json.dumps(detail or {}), now, now),
+                (
+                    approval_id,
+                    site_name,
+                    action,
+                    "pending",
+                    requested_by,
+                    json.dumps(detail or {}),
+                    "[]",
+                    max(1, required_approvals),
+                    json.dumps(approver_roles or []),
+                    expires_at,
+                    now,
+                    now,
+                ),
             )
         return self.get_approval(approval_id)  # type: ignore[return-value]
 
-    def approve(self, approval_id: str, approved_by: str) -> ApprovalRecord | None:
+    def approve(self, approval_id: str, approved_by: str, roles: list[str] | None = None) -> ApprovalRecord | None:
+        approval = self.get_approval(approval_id)
+        if approval is None:
+            return None
+        now = _now()
+        if approval.status != "pending":
+            return approval
+        if approval.expires_at and approval.expires_at <= now:
+            return self.expire_approval(approval_id)
+        if approval.approver_roles and not set(roles or []).intersection(approval.approver_roles):
+            return approval
+        votes = [vote for vote in approval.votes if vote.get("actor") != approved_by]
+        votes.append({"actor": approved_by, "roles": roles or [], "created_at": now})
+        status = "approved" if len(votes) >= approval.required_approvals else "pending"
+        approved_by_value = approved_by if status == "approved" else None
         with self._connect() as conn:
             conn.execute(
-                "UPDATE approvals SET status = ?, approved_by = ?, updated_at = ? WHERE id = ?",
-                ("approved", approved_by, _now(), approval_id),
+                "UPDATE approvals SET status = ?, approved_by = ?, votes_json = ?, updated_at = ? WHERE id = ?",
+                (status, approved_by_value, json.dumps(votes), now, approval_id),
             )
         return self.get_approval(approval_id)
+
+    def expire_approval(self, approval_id: str) -> ApprovalRecord | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE approvals SET status = ?, approved_by = ?, updated_at = ? WHERE id = ? AND status = ?",
+                ("expired", None, _now(), approval_id, "pending"),
+            )
+        return self.get_approval(approval_id)
+
+    def expire_pending_approvals(self) -> int:
+        now = _now()
+        with self._connect() as conn:
+            result = conn.execute(
+                "UPDATE approvals SET status = ?, updated_at = ? WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?",
+                ("expired", now, "pending", now),
+            )
+        return result.rowcount
 
     def reject(self, approval_id: str, rejected_by: str, reason: str = "") -> ApprovalRecord | None:
         approval = self.get_approval(approval_id)
@@ -920,6 +1018,44 @@ class StrataStore:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM provider_configs WHERE provider_name = ?", (provider_name,)).fetchone()
         return self._provider_config_from_row(row) if row else None
+
+    def add_provider_validation(
+        self,
+        provider_name: str,
+        operation: str,
+        status: str,
+        lab: str | None = None,
+        evidence: str | None = None,
+        notes: str | None = None,
+    ) -> ProviderValidationRecord:
+        record_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_validation (id, provider_name, operation, status, lab, evidence, notes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record_id, provider_name, operation, status, lab, evidence, notes, now),
+            )
+        return ProviderValidationRecord(
+            id=record_id,
+            provider_name=provider_name,
+            operation=operation,
+            status=status,
+            lab=lab,
+            evidence=evidence,
+            notes=notes,
+            created_at=now,
+        )
+
+    def list_provider_validation(self, provider_name: str | None = None) -> list[ProviderValidationRecord]:
+        with self._connect() as conn:
+            if provider_name:
+                rows = conn.execute("SELECT * FROM provider_validation WHERE provider_name = ? ORDER BY created_at DESC", (provider_name,)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM provider_validation ORDER BY created_at DESC").fetchall()
+        return [self._provider_validation_from_row(row) for row in rows]
 
     def upsert_secret_ref(self, name: str, secret_type: str, provider: str, reference: str, metadata: dict[str, Any] | None = None) -> SecretRefRecord:
         now = _now()
@@ -1112,6 +1248,10 @@ class StrataStore:
             requested_by=row["requested_by"],
             approved_by=row["approved_by"],
             detail=json.loads(row["detail_json"]),
+            votes=json.loads(row["votes_json"]) if "votes_json" in row.keys() and row["votes_json"] else [],
+            required_approvals=row["required_approvals"] if "required_approvals" in row.keys() else 1,
+            approver_roles=json.loads(row["approver_roles_json"]) if "approver_roles_json" in row.keys() and row["approver_roles_json"] else [],
+            expires_at=row["expires_at"] if "expires_at" in row.keys() else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -1143,6 +1283,18 @@ class StrataStore:
             provider_name=row["provider_name"],
             config=json.loads(row["config_json"]),
             updated_at=row["updated_at"],
+        )
+
+    def _provider_validation_from_row(self, row) -> ProviderValidationRecord:
+        return ProviderValidationRecord(
+            id=row["id"],
+            provider_name=row["provider_name"],
+            operation=row["operation"],
+            status=row["status"],
+            lab=row["lab"],
+            evidence=row["evidence"],
+            notes=row["notes"],
+            created_at=row["created_at"],
         )
 
     def _secret_ref_from_row(self, row) -> SecretRefRecord:

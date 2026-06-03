@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from strataone.api import app
@@ -395,6 +397,39 @@ def test_provider_detail_includes_configuration_template() -> None:
     assert response.json()["template"]["credential_ref"] == "azure-local-spn"
 
 
+def test_provider_validation_evidence_can_be_recorded() -> None:
+    client = TestClient(app)
+
+    recorded = client.post(
+        "/providers/generic-redfish/validation",
+        json={"operation": "redfish-virtual-media", "status": "validated", "lab": "integration", "evidence": "run-001"},
+    )
+    detail = client.get("/providers/generic-redfish")
+
+    assert recorded.status_code == 200
+    assert recorded.json()["status"] == "validated"
+    assert any(item["evidence"] == "run-001" for item in detail.json()["validation"])
+
+
+def test_approval_policy_minimum_approvals_keeps_request_pending() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+    policy = client.post(
+        "/approval-policy",
+        json={"action": "mount-iso", "enabled": True, "approver_roles": ["Platform Admin"], "min_approvals": 2, "expires_minutes": 60},
+    ).json()
+
+    requested = client.post("/sites/branch-001/jobs/mount-iso", json={"iso_url": "https://repo.example.com/azure-local.iso"})
+    queued = client.post(f"/approvals/{requested.json()['approval_id']}/run")
+    client.delete(f"/approval-policy/{policy['id']}")
+
+    assert requested.json()["status"] == "approval-required"
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "pending-approval"
+    assert queued.json()["job_id"] is None
+
+
 def test_approval_can_be_rejected() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()
@@ -426,6 +461,27 @@ def test_approval_can_be_approved_and_run() -> None:
     assert queued.status_code == 200
     assert queued.json()["status"] == "queued"
     assert "job_id" in queued.json()
+
+
+def test_job_report_and_resume_endpoints() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+
+    created = client.post("/sites/branch-001/jobs/inventory").json()
+    job_id = created["job_id"]
+    for _ in range(20):
+        job = client.get(f"/jobs/{job_id}").json()
+        if job["status"] == "failed":
+            break
+        time.sleep(0.05)
+    report = client.get(f"/jobs/{job_id}/report")
+    resumed = client.post(f"/jobs/{job_id}/resume")
+
+    assert report.status_code == 200
+    assert report.json()["report_type"] == "strataone-job-execution"
+    assert resumed.status_code == 200
+    assert resumed.json()["resume_from_job_id"] == job_id
 
 
 def test_artifact_files_can_be_listed_and_read() -> None:

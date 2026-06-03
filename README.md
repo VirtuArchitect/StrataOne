@@ -6,6 +6,11 @@ It is designed for enterprise edge, branch, ROBO, private cloud, and hybrid clou
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes and feature history.
 
+Field and operator documentation:
+
+- [Field Installation Guide](docs/FIELD_INSTALLATION_GUIDE.md)
+- [User Guide](docs/USER_GUIDE.md)
+
 ## Vision
 
 StrataOne turns a desired-state site definition into a repeatable deployment and lifecycle workflow:

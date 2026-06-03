@@ -77,6 +77,14 @@ class ProviderConfigPayload(BaseModel):
     config: dict[str, Any]
 
 
+class ProviderValidationPayload(BaseModel):
+    operation: str
+    status: str = "validated"
+    lab: str | None = None
+    evidence: str | None = None
+    notes: str | None = None
+
+
 class SecretRefPayload(BaseModel):
     name: str
     type: str = "bmc"
@@ -322,6 +330,7 @@ def provider_detail(provider_name: str, _: Any = read_providers) -> dict[str, An
         "provider": provider.model_dump(mode="json"),
         "config": config.model_dump(mode="json") if config else None,
         "template": _provider_config_template(provider.name, provider.type),
+        "validation": [item.model_dump(mode="json") for item in store.list_provider_validation(provider_name)],
     }
 
 
@@ -353,6 +362,17 @@ def test_provider(provider_name: str, context: AuthContext = Depends(require_per
     }
     store.add_audit(context.username, "provider.test", f"provider:{provider_name}", result)
     return result
+
+
+@app.post("/providers/{provider_name}/validation")
+def add_provider_validation(provider_name: str, payload: ProviderValidationPayload, context: AuthContext = manage_providers) -> dict[str, Any]:
+    if not any(item.name == provider_name for item in list_providers()):
+        raise HTTPException(status_code=404, detail="provider not found")
+    if payload.status not in {"validated", "failed", "pending", "not-validated"}:
+        raise HTTPException(status_code=422, detail="unsupported validation status")
+    record = store.add_provider_validation(provider_name, payload.operation, payload.status, payload.lab, payload.evidence, payload.notes)
+    store.add_audit(context.username, "provider.validation.add", f"provider:{provider_name}", record.model_dump(mode="json"))
+    return record.model_dump(mode="json")
 
 
 @app.get("/settings")
@@ -395,6 +415,7 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "hardware": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "hardware"],
             "platform": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "platform"],
             "configured": [item.provider_name for item in [store.get_provider_config(provider.name) for provider in provider_list] if item],
+            "validation": [item.model_dump(mode="json") for item in store.list_provider_validation()],
         },
         "api": {
             "cors": os.getenv("STRATAONE_CORS_ORIGINS", "http://localhost:8088,http://127.0.0.1:8088"),
@@ -710,6 +731,8 @@ def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[
     unknown_roles = [role for role in payload.roles if role not in known_roles]
     if unknown_roles:
         raise HTTPException(status_code=422, detail=f"unknown roles: {', '.join(unknown_roles)}")
+    if payload.password:
+        _validate_password_policy(payload.password)
     user = UserRecord(
         username=payload.username.strip(),
         display_name=payload.display_name.strip() or payload.username.strip(),
@@ -772,9 +795,22 @@ def run_site_job(site_name: str, action: str, payload: JobPayload | None = None,
     if _approval_required(action, params):
         approval_id = params.get("approval_id")
         approval = store.get_approval(approval_id) if approval_id else None
-        if approval is None or approval.status != "approved":
-            pending = store.create_approval(site_name, action, context.username, {"params": _approval_safe_params(params)})
-            store.add_audit(context.username, "approval.requested", f"approval:{pending.id}", {"site": site_name, "action": action})
+        if approval is None or approval.status != "approved" or approval.site_name != site_name or approval.action != action:
+            policy = _approval_policy_for_action(action)
+            pending = store.create_approval(
+                site_name,
+                action,
+                context.username,
+                {
+                    "params": _approval_safe_params(params),
+                    "reason": _approval_reason(action, policy),
+                    "policy": policy.model_dump(mode="json") if policy else None,
+                },
+                required_approvals=policy.min_approvals if policy else 1,
+                approver_roles=policy.approver_roles if policy else [],
+                expires_minutes=policy.expires_minutes if policy else 1440,
+            )
+            store.add_audit(context.username, "approval.requested", f"approval:{pending.id}", {"site": site_name, "action": action, "required_approvals": pending.required_approvals})
             return {"approval_id": pending.id, "status": "approval-required"}
     return {"job_id": jobs.submit(site_name, action, params)}
 
@@ -797,6 +833,28 @@ def get_job_events(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
     return {"events": [event.model_dump(mode="json") for event in store.list_job_events(job_id)]}
 
 
+@app.get("/jobs/{job_id}/report")
+def get_job_report(job_id: str, _: Any = Depends(require_permission("export-reports", store))) -> dict[str, Any]:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    site = store.get_site(job.site_name)
+    events = store.list_job_events(job_id)
+    return {
+        "report_type": "strataone-job-execution",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "job": job.model_dump(mode="json"),
+        "site": site.model_dump(mode="json") if site else None,
+        "events": [event.model_dump(mode="json") for event in events],
+        "summary": {
+            "status": job.status,
+            "event_count": len(events),
+            "failed": job.status == "failed",
+            "duration_known": bool(job.started_at and job.finished_at),
+        },
+    }
+
+
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
     job = store.cancel_job(job_id)
@@ -814,6 +872,19 @@ def retry_job(job_id: str, context: AuthContext = Depends(require_permission("ru
     new_job_id = jobs.submit(job.site_name, job.action, job.params)
     store.add_audit(context.username, "job.retry", f"job:{job_id}", {"new_job_id": new_job_id})
     return {"job_id": new_job_id, "status": "queued"}
+
+
+@app.post("/jobs/{job_id}/resume")
+def resume_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in {"failed", "canceled"}:
+        raise HTTPException(status_code=409, detail="only failed or canceled jobs can be resumed")
+    params = {**job.params, "resume_from_job_id": job_id}
+    new_job_id = jobs.submit(job.site_name, job.action, params)
+    store.add_audit(context.username, "job.resume", f"job:{job_id}", {"new_job_id": new_job_id})
+    return {"job_id": new_job_id, "status": "queued", "resume_from_job_id": job_id}
 
 
 @app.get("/jobs/{job_id}/events/stream")
@@ -842,23 +913,29 @@ def list_audit_log(limit: int = 100, _: Any = read_audit) -> dict[str, Any]:
 
 @app.get("/approvals")
 def list_approval_records(_: Any = read_jobs) -> dict[str, Any]:
+    store.expire_pending_approvals()
     return {"approvals": [item.model_dump(mode="json") for item in store.list_approvals()]}
 
 
 @app.post("/approvals/{approval_id}/approve")
 def approve_request(approval_id: str, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
-    approval = store.approve(approval_id, context.username)
+    _assert_can_approve(approval_id, context)
+    approval = store.approve(approval_id, context.username, context.roles)
     if approval is None:
         raise HTTPException(status_code=404, detail="approval not found")
-    store.add_audit(context.username, "approval.approved", f"approval:{approval_id}", approval.model_dump(mode="json"))
+    store.add_audit(context.username, "approval.vote", f"approval:{approval_id}", approval.model_dump(mode="json"))
     return approval.model_dump(mode="json")
 
 
 @app.post("/approvals/{approval_id}/run")
 def approve_and_run(approval_id: str, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
-    approval = store.approve(approval_id, context.username)
+    _assert_can_approve(approval_id, context)
+    approval = store.approve(approval_id, context.username, context.roles)
     if approval is None:
         raise HTTPException(status_code=404, detail="approval not found")
+    if approval.status != "approved":
+        store.add_audit(context.username, "approval.vote.pending", f"approval:{approval_id}", approval.model_dump(mode="json"))
+        return {"approval": approval.model_dump(mode="json"), "job_id": None, "status": "pending-approval"}
     params = dict(approval.detail.get("params") or {})
     params["approval_id"] = approval_id
     job_id = jobs.submit(approval.site_name, approval.action, params)
@@ -931,12 +1008,14 @@ def save_site_inventory(site_name: str, payload: InventoryPayload, _: Any = writ
 @app.post("/sites/validate")
 def validate_site(payload: SitePayload, _: Any = Depends(require_permission("run-validate", store))) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
+    issues = _site_operational_issues(spec)
     return {
-        "valid": True,
+        "valid": len([issue for issue in issues if issue["severity"] == "error"]) == 0,
         "site_name": spec.site.name,
         "platform": spec.platform.type.value,
         "hardware_provider": spec.hardware.vendor,
         "nodes": len(spec.hardware.nodes),
+        "issues": issues,
     }
 
 
@@ -976,10 +1055,21 @@ def _permission_for_action(action: str) -> str:
 def _approval_required(action: str, params: dict[str, Any]) -> bool:
     if not os.getenv("STRATAONE_REQUIRE_APPROVALS", "true").lower() in {"1", "true", "yes", "on"}:
         return False
-    policy = store.get_approval_policy(action)
+    policy = _approval_policy_for_action(action)
     if policy is not None:
         return policy.enabled
     return action in _approval_required_actions()
+
+
+def _approval_policy_for_action(action: str):
+    return store.get_approval_policy(action)
+
+
+def _approval_reason(action: str, policy) -> str:
+    if policy:
+        roles = ", ".join(policy.approver_roles) if policy.approver_roles else "any approver"
+        return f"{action} requires {policy.min_approvals} approval(s) from {roles} before execution."
+    return f"{action} is configured as a protected live-impact action."
 
 
 def _approval_required_actions() -> set[str]:
@@ -989,6 +1079,49 @@ def _approval_required_actions() -> set[str]:
 
 def _approval_safe_params(params: dict[str, Any]) -> dict[str, Any]:
     return {key: ("***" if key in {"password", "username"} else value) for key, value in params.items()}
+
+
+def _assert_can_approve(approval_id: str, context: AuthContext) -> None:
+    approval = store.get_approval(approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if approval.status != "pending":
+        if approval.status == "expired":
+            raise HTTPException(status_code=409, detail="approval request has expired")
+        return
+    if approval.expires_at and approval.expires_at <= datetime.now(UTC).isoformat():
+        store.expire_approval(approval_id)
+        raise HTTPException(status_code=409, detail="approval request has expired")
+    if approval.approver_roles and not set(context.roles).intersection(approval.approver_roles):
+        raise HTTPException(status_code=403, detail=f"approval requires one of: {', '.join(approval.approver_roles)}")
+
+
+def _validate_password_policy(password: str) -> None:
+    min_length = int(os.getenv("STRATAONE_PASSWORD_MIN_LENGTH", "12"))
+    checks = {
+        "uppercase": any(char.isupper() for char in password),
+        "lowercase": any(char.islower() for char in password),
+        "number": any(char.isdigit() for char in password),
+        "symbol": any(not char.isalnum() for char in password),
+    }
+    if len(password) < min_length or sum(1 for passed in checks.values() if passed) < 3:
+        raise HTTPException(status_code=422, detail=f"password must be at least {min_length} characters and include at least three of: uppercase, lowercase, number, symbol")
+
+
+def _site_operational_issues(spec: SiteSpec) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    if not spec.hardware.nodes:
+        issues.append({"severity": "error", "field": "hardware.nodes", "message": "At least one node is required."})
+    serials: set[str] = set()
+    for node in spec.hardware.nodes:
+        if node.serial in serials:
+            issues.append({"severity": "error", "field": "hardware.nodes.serial", "message": f"Duplicate node serial {node.serial}."})
+        serials.add(node.serial)
+    if spec.platform.type.value == "azure-local" and spec.platform.azure is None:
+        issues.append({"severity": "error", "field": "platform.azure", "message": "Azure Local deployments require Azure subscription, tenant, resource group, and region."})
+    if spec.network.management_vlan == spec.network.storage_vlan or spec.network.management_vlan == spec.network.vm_vlan:
+        issues.append({"severity": "warning", "field": "network.vlan", "message": "Management VLAN should be isolated from storage and VM traffic."})
+    return issues
 
 
 def _redact_secret(payload: dict[str, Any]) -> dict[str, Any]:

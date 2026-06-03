@@ -63,6 +63,8 @@ class JobRunner:
 
     def _execute(self, action: str, spec, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params = params or {}
+        if params.get("resume_from_job_id"):
+            self.store.add_job_event(params.get("_job_id", "unknown"), "info", "Resuming from prior job", {"resume_from_job_id": params["resume_from_job_id"]})
         if action == "validate":
             return {
                 "valid": True,
@@ -229,11 +231,21 @@ class JobRunner:
             "approval_id": params.get("approval_id"),
             "azure": spec.platform.azure.model_dump(mode="json") if spec.platform.azure else {},
             "stages": stages,
+            "next_actions": [
+                "Confirm provider credentials and Azure permissions.",
+                "Run preflight and resolve warnings.",
+                "Approve live deployment action before provider execution.",
+            ],
             "note": "Stages are ready for live Azure execution once provider credentials, approvals, and lab validation are configured.",
         }
 
     def _drift_detect(self, spec, params: dict[str, Any]) -> dict[str, Any]:
         inventory = self.store.get_inventory(spec.site.name)
+        desired_nodes = {node.serial: node for node in spec.hardware.nodes}
+        observed_nodes = {node.get("serial"): node for node in (inventory.report.get("nodes", []) if inventory else []) if node.get("serial")}
+        missing = [serial for serial in desired_nodes if serial not in observed_nodes]
+        unexpected = [serial for serial in observed_nodes if serial not in desired_nodes]
+        unreachable = [serial for serial, node in observed_nodes.items() if not node.get("reachable", False)]
         checks = [
             {"name": "desired-state-registered", "status": "pass", "detail": "Site desired state is present"},
             {
@@ -241,15 +253,27 @@ class JobRunner:
                 "status": "pass" if inventory else "warn",
                 "detail": "Inventory is available" if inventory else "No inventory collected yet",
             },
-            {"name": "node-count", "status": "pass", "detail": f"{len(spec.hardware.nodes)} desired nodes"},
+            {"name": "node-count", "status": "pass" if not missing and not unexpected else "fail", "detail": f"{len(spec.hardware.nodes)} desired nodes, {len(observed_nodes)} observed nodes"},
             {"name": "platform", "status": "pass", "detail": spec.platform.type.value},
         ]
+        for serial in missing:
+            checks.append({"name": "missing-node", "status": "fail", "detail": serial})
+        for serial in unexpected:
+            checks.append({"name": "unexpected-node", "status": "warn", "detail": serial})
+        for serial in unreachable:
+            checks.append({"name": "unreachable-node", "status": "fail", "detail": serial})
         drift = [check for check in checks if check["status"] != "pass"]
+        self.store.add_job_event(params.get("_job_id", "unknown"), "info", "Drift comparison complete", {"drift_items": len(drift)})
         return {
             "site_name": spec.site.name,
             "action": "drift-detect",
             "drift_detected": bool(drift),
             "checks": checks,
+            "diff": {
+                "missing_nodes": missing,
+                "unexpected_nodes": unexpected,
+                "unreachable_nodes": unreachable,
+            },
             "recommendation": "Run inventory before remediation" if drift else "No drift found in current control plane data",
         }
 
@@ -262,13 +286,21 @@ class JobRunner:
             self._stage("evict-node", f"Remove failed node {failed_serial} from cluster membership", "ready"),
             self._stage("image-node", "Apply platform image and bootstrap configuration", "ready"),
             self._stage("join-cluster", "Join replacement node and restore baseline", "ready"),
+            self._stage("verify-health", "Run inventory, drift detection, and cluster health checks", "ready"),
         ]
+        for stage in stages:
+            self.store.add_job_event(params.get("_job_id", "unknown"), "info", stage["name"], {"status": stage["status"]})
         return {
             "site_name": spec.site.name,
             "action": "node-replacement",
             "failed_serial": failed_serial,
             "replacement_serial": replacement_serial,
             "stages": stages,
+            "operator_inputs": {
+                "failed_serial": failed_serial,
+                "replacement_serial": replacement_serial,
+                "credential_ref": params.get("credential_ref"),
+            },
             "execution_mode": "guided-lifecycle-contract",
         }
 
