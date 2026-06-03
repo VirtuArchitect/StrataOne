@@ -1,9 +1,10 @@
-const apiBase = window.STRATAONE_API_BASE || "http://localhost:8080";
+const apiBase = window.STRATAONE_API_BASE || "http://127.0.0.1:8080";
 
 const state = {
   sites: [],
   jobs: [],
   providers: [],
+  settings: null,
   inventory: null,
   selectedSite: null,
   selectedHardware: "generic-redfish",
@@ -29,6 +30,9 @@ const els = {
   resultOutput: document.querySelector("#resultOutput"),
   artifactOutput: document.querySelector("#artifactOutput"),
   artifactDetails: document.querySelector("#artifactDetails"),
+  settingsTitle: document.querySelector("#settingsTitle"),
+  settingsSubtitle: document.querySelector("#settingsSubtitle"),
+  settingsContent: document.querySelector("#settingsContent"),
   lastAction: document.querySelector("#lastAction"),
   siteCount: document.querySelector("#siteCount"),
   jobCount: document.querySelector("#jobCount"),
@@ -52,6 +56,18 @@ const viewCopy = {
   providers: ["Providers", "Review available hardware and platform providers."],
   artifacts: ["Artifacts", "Generate and inspect deployment bundles for selected sites."],
   lifecycle: ["Lifecycle", "Plan Day-2 controls such as drift, updates, and node replacement."],
+  settings: ["Settings", "Configure access posture, database, providers, artifacts, and audit policy."],
+};
+
+const settingsCopy = {
+  general: ["General", "Instance identity and runtime defaults"],
+  access: ["Access & RBAC", "Role model and access-control posture"],
+  secrets: ["Secrets", "Credential handling and secret-store posture"],
+  database: ["Database", "Storage backend, counts, and persistence location"],
+  providers: ["Providers", "Enabled hardware and platform providers"],
+  api: ["API", "API exposure, docs, CORS, and session policy"],
+  artifacts: ["Artifacts", "Artifact output and retention policy"],
+  audit: ["Audit", "Audit and history-retention posture"],
 };
 
 const exampleYaml = toYaml(exampleSpec());
@@ -64,7 +80,10 @@ setInterval(refreshJobs, 2500);
 
 function wireEvents() {
   document.querySelectorAll(".nav-item").forEach((button) => {
-    button.addEventListener("click", () => showView(button.dataset.view));
+    button.addEventListener("click", async () => {
+      showView(button.dataset.view);
+      if (button.dataset.view === "settings") await loadSettings();
+    });
   });
   document.querySelectorAll(".step").forEach((button) => {
     button.addEventListener("click", () => showWizardStep(button.dataset.step));
@@ -76,6 +95,7 @@ function wireEvents() {
     button.addEventListener("click", () => selectChoice("platform", button.dataset.platform));
   });
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
+  document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#previousStep").addEventListener("click", previousWizardStep);
   document.querySelector("#nextStep").addEventListener("click", nextWizardStep);
   document.querySelector("#newDeploymentTop").addEventListener("click", () => showView("deployments"));
@@ -103,6 +123,12 @@ function wireEvents() {
   });
   document.querySelectorAll("[data-job]").forEach((button) => {
     button.addEventListener("click", () => runJob(button.dataset.job));
+  });
+  document.querySelectorAll(".settings-tab").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!state.settings) await loadSettings();
+      showSettingsSection(button.dataset.settingsSection);
+    });
   });
 }
 
@@ -162,12 +188,12 @@ function selectChoice(type, value) {
 
 async function refreshAll() {
   await checkApi();
-  await Promise.all([loadSites(), loadJobs(), loadProviders()]);
+  await Promise.all([loadSites(), loadJobs(), loadProviders(), loadSettings()]);
 }
 
 async function checkApi() {
   try {
-    const response = await fetch(`${apiBase}/health`);
+    const response = await fetchWithTimeout(`${apiBase}/health`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     els.apiStatus.textContent = "API: online";
     els.apiStatus.className = "status-pill ok";
@@ -206,6 +232,34 @@ async function loadProviders() {
   const data = await apiGet("/providers");
   state.providers = data.providers || [];
   renderProviders();
+}
+
+async function loadSettings() {
+  try {
+    state.settings = await apiGet("/settings");
+    showSettingsSection(activeSettingsSection());
+  } catch (error) {
+    if (els.settingsContent) {
+      els.settingsContent.innerHTML = `<div class="settings-empty">Settings unavailable: ${escapeHtml(error.message)}</div>`;
+    }
+  }
+}
+
+function activeSettingsSection() {
+  return document.querySelector(".settings-tab.active")?.dataset.settingsSection || "general";
+}
+
+function showSettingsSection(section) {
+  document.querySelectorAll(".settings-tab").forEach((button) => button.classList.toggle("active", button.dataset.settingsSection === section));
+  if (!els.settingsContent) return;
+  const [title, subtitle] = settingsCopy[section] || settingsCopy.general;
+  els.settingsTitle.textContent = title;
+  els.settingsSubtitle.textContent = subtitle;
+  if (!state.settings) {
+    els.settingsContent.innerHTML = `<div class="settings-empty">Loading settings...</div>`;
+    return;
+  }
+  els.settingsContent.innerHTML = renderSettingsSection(section, state.settings[section]);
 }
 
 async function saveSite(spec) {
@@ -367,6 +421,65 @@ function renderProviders() {
   `).join("");
 }
 
+function renderSettingsSection(section, data) {
+  if (!data) return `<div class="settings-empty">No settings found for ${escapeHtml(section)}.</div>`;
+  if (section === "access") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("Mode", data.mode)}
+        ${settingCard("RBAC Enforced", data.rbac_enforced ? "enabled" : "planned")}
+        ${settingCard("OIDC", data.oidc_enabled ? "configured" : "not configured")}
+      </div>
+      <div class="settings-list">
+        ${(data.roles || []).map((role) => `
+          <div class="settings-row">
+            <strong>${escapeHtml(role.name)}</strong>
+            <span>${escapeHtml((role.permissions || []).join(", "))}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+  if (section === "providers") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("Plugin Directory", data.plugin_dir)}
+        ${settingCard("Hardware Providers", (data.hardware || []).length)}
+        ${settingCard("Platform Providers", (data.platform || []).length)}
+      </div>
+      <h3>Hardware</h3>
+      <div class="settings-list">${(data.hardware || []).map(providerRow).join("")}</div>
+      <h3>Platform</h3>
+      <div class="settings-list">${(data.platform || []).map(providerRow).join("")}</div>
+    `;
+  }
+  return `<div class="settings-grid">${Object.entries(data).map(([key, value]) => settingCard(labelize(key), formatSettingValue(value))).join("")}</div>`;
+}
+
+function settingCard(label, value) {
+  return `<div class="setting-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function providerRow(provider) {
+  return `
+    <div class="settings-row">
+      <strong>${escapeHtml(provider.name)}</strong>
+      <span>${escapeHtml(provider.description)} - ${escapeHtml(provider.source)}</span>
+    </div>
+  `;
+}
+
+function formatSettingValue(value) {
+  if (typeof value === "boolean") return value ? "enabled" : "disabled";
+  if (Array.isArray(value)) return `${value.length} configured`;
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return value ?? "-";
+}
+
+function labelize(value) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function renderArtifactResult(result) {
   els.artifactOutput.textContent = JSON.stringify(result, null, 2);
 }
@@ -471,19 +584,32 @@ function jobPayload(action) {
 }
 
 async function apiGet(path) {
-  const response = await fetch(`${apiBase}${path}`);
+  const response = await fetchWithTimeout(`${apiBase}${path}`);
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
 
 async function apiPost(path, body) {
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetchWithTimeout(`${apiBase}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error(`${url} timed out`);
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function parseTinyYaml(text) {

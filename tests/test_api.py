@@ -58,6 +58,18 @@ def test_persistent_site_job_and_provider_endpoints() -> None:
     assert "job_id" in jobs_response.json()
 
 
+def test_settings_endpoint_returns_enterprise_sections() -> None:
+    client = TestClient(app)
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["database"]["mode"] == "sqlite"
+    assert "roles" in payload["access"]
+    assert "hardware" in payload["providers"]
+
+
 def test_artifact_endpoint_generates_bundle() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()

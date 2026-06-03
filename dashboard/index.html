@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-ops2" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-settings2" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,6 +25,7 @@
           <button class="nav-item" data-view="providers">Providers</button>
           <button class="nav-item" data-view="artifacts">Artifacts</button>
           <button class="nav-item" data-view="lifecycle">Lifecycle</button>
+          <button class="nav-item" data-view="settings">Settings</button>
         </nav>
       </aside>
 
@@ -342,9 +343,35 @@
             </div>
           </div>
         </section>
+
+        <section class="view" id="view-settings" hidden>
+          <div class="settings-layout">
+            <aside class="settings-nav" aria-label="Settings sections">
+              <button class="settings-tab active" data-settings-section="general">General</button>
+              <button class="settings-tab" data-settings-section="access">Access & RBAC</button>
+              <button class="settings-tab" data-settings-section="secrets">Secrets</button>
+              <button class="settings-tab" data-settings-section="database">Database</button>
+              <button class="settings-tab" data-settings-section="providers">Providers</button>
+              <button class="settings-tab" data-settings-section="api">API</button>
+              <button class="settings-tab" data-settings-section="artifacts">Artifacts</button>
+              <button class="settings-tab" data-settings-section="audit">Audit</button>
+            </aside>
+
+            <section class="panel settings-panel">
+              <div class="panel-header">
+                <div>
+                  <h2 id="settingsTitle">General</h2>
+                  <span id="settingsSubtitle">Instance identity and runtime defaults</span>
+                </div>
+                <button class="secondary" id="refreshSettings">Refresh Settings</button>
+              </div>
+              <div class="settings-content" id="settingsContent"></div>
+            </section>
+          </div>
+        </section>
       </main>
     </div>
 
-    <script src="./app.js?v=20260603-ops2"></script>
+    <script src="./app.js?v=20260603-settings2"></script>
   </body>
 </html>

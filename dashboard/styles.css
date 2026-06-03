@@ -449,6 +449,83 @@ textarea {
   margin-top: 3px;
 }
 
+.settings-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.settings-nav {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.settings-tab {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  justify-content: flex-start;
+  min-height: 38px;
+}
+
+.settings-tab.active,
+.settings-tab:hover {
+  background: #e7f2f4;
+  color: var(--accent-dark);
+}
+
+.settings-content {
+  padding: 16px;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.setting-card,
+.settings-row,
+.settings-empty {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+}
+
+.setting-card span,
+.settings-row span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+}
+
+.setting-card strong,
+.settings-row strong {
+  display: block;
+  font-size: 14px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.settings-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings-panel h3 {
+  font-size: 13px;
+  margin: 18px 0 8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 pre {
   font-family: Consolas, "Courier New", monospace;
   font-size: 12px;
@@ -465,5 +542,7 @@ pre {
   .primary-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deployment-shell { grid-template-columns: 1fr; }
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
   .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: 1 / -1; }
 }

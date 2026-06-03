@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,64 @@ def seed_example_site() -> None:
 @app.get("/providers")
 def providers() -> dict[str, Any]:
     return {"providers": [provider.model_dump(mode="json") for provider in list_providers()]}
+
+
+@app.get("/settings")
+def settings() -> dict[str, Any]:
+    provider_list = list_providers()
+    return {
+        "general": {
+            "instance_name": os.getenv("STRATAONE_INSTANCE_NAME", "StrataOne"),
+            "environment": os.getenv("STRATAONE_ENVIRONMENT", "development"),
+            "api_port": os.getenv("STRATAONE_API_PORT", "8080"),
+            "dashboard_port": os.getenv("STRATAONE_DASHBOARD_PORT", "8088"),
+        },
+        "access": {
+            "mode": "local-dev",
+            "rbac_enforced": False,
+            "oidc_enabled": bool(os.getenv("STRATAONE_OIDC_ISSUER")),
+            "roles": [
+                {"name": "Viewer", "permissions": ["read-sites", "read-jobs", "read-providers"]},
+                {"name": "Operator", "permissions": ["run-inventory", "run-preflight", "generate-artifacts"]},
+                {"name": "Deployment Admin", "permissions": ["create-sites", "update-sites", "run-plan"]},
+                {"name": "Platform Admin", "permissions": ["manage-providers", "manage-settings"]},
+                {"name": "Auditor", "permissions": ["read-audit", "export-reports"]},
+            ],
+        },
+        "secrets": {
+            "bmc_username_configured": bool(os.getenv("STRATAONE_BMC_USERNAME")),
+            "bmc_password_configured": bool(os.getenv("STRATAONE_BMC_PASSWORD")),
+            "dashboard_transient_credentials": True,
+            "vault_provider": os.getenv("STRATAONE_VAULT_PROVIDER", "none"),
+        },
+        "database": {
+            "mode": "sqlite",
+            "path": str(store.path),
+            "site_count": len(store.list_sites()),
+            "job_count": len(store.list_jobs()),
+        },
+        "providers": {
+            "plugin_dir": os.getenv("STRATAONE_PLUGIN_DIR", "plugins"),
+            "hardware": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "hardware"],
+            "platform": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "platform"],
+        },
+        "api": {
+            "cors": "allow-all",
+            "docs": "/docs",
+            "health": "/health",
+            "session_timeout_minutes": int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60")),
+        },
+        "artifacts": {
+            "output_dir": os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts"),
+            "retention_days": int(os.getenv("STRATAONE_ARTIFACT_RETENTION_DAYS", "30")),
+            "download_bundles_enabled": False,
+        },
+        "audit": {
+            "enabled": False,
+            "job_history_retention_days": int(os.getenv("STRATAONE_JOB_RETENTION_DAYS", "90")),
+            "configuration_change_tracking": "planned",
+        },
+    }
 
 
 @app.get("/sites")
