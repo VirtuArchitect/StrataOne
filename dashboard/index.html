@@ -4,9 +4,41 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-metrics1" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-navicons1" />
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-dashboard" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect>
+      </symbol>
+      <symbol id="icon-deployments" viewBox="0 0 24 24">
+        <path d="M7 17h10"></path><path d="M8 13h8l-1-7H9l-1 7Z"></path><path d="M10 13v4"></path><path d="M14 13v4"></path><path d="M9 6l3-3 3 3"></path>
+      </symbol>
+      <symbol id="icon-sites" viewBox="0 0 24 24">
+        <path d="M5 20V8l7-4 7 4v12"></path><path d="M9 20v-6h6v6"></path><path d="M9 10h.01"></path><path d="M15 10h.01"></path>
+      </symbol>
+      <symbol id="icon-providers" viewBox="0 0 24 24">
+        <path d="M8 7V4"></path><path d="M16 7V4"></path><path d="M7 7h10v5a5 5 0 0 1-10 0V7Z"></path><path d="M12 17v3"></path>
+      </symbol>
+      <symbol id="icon-artifacts" viewBox="0 0 24 24">
+        <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m4.5 8 7.5 4 7.5-4"></path><path d="M12 12v8"></path>
+      </symbol>
+      <symbol id="icon-jobs" viewBox="0 0 24 24">
+        <path d="M4 6h11"></path><path d="M4 12h8"></path><path d="M4 18h10"></path><path d="m17 15 3 3-3 3"></path>
+      </symbol>
+      <symbol id="icon-approvals" viewBox="0 0 24 24">
+        <path d="M12 3 19 6v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-3Z"></path><path d="m9 12 2 2 4-5"></path>
+      </symbol>
+      <symbol id="icon-lifecycle" viewBox="0 0 24 24">
+        <path d="M20 12a8 8 0 0 1-13.7 5.6"></path><path d="M4 12A8 8 0 0 1 17.7 6.4"></path><path d="M7 18H4v-3"></path><path d="M17 6h3v3"></path>
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <path d="M14.7 6.3a3 3 0 0 0-3.9 3.9L5 16v3h3l5.8-5.8a3 3 0 0 0 3.9-3.9l-2.2 2.2-3-3 2.2-2.2Z"></path>
+      </symbol>
+      <symbol id="icon-about" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7h.01"></path>
+      </symbol>
+    </svg>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -21,19 +53,19 @@
 
         <nav class="primary-nav" aria-label="Primary">
           <span class="nav-group">Overview</span>
-          <button class="nav-item active" data-view="overview">Dashboard</button>
-          <button class="nav-item" data-view="deployments">Deployments</button>
-          <button class="nav-item" data-view="sites">Sites</button>
+          <button class="nav-item active" data-view="overview"><svg><use href="#icon-dashboard"></use></svg><span>Dashboard</span></button>
+          <button class="nav-item" data-view="deployments"><svg><use href="#icon-deployments"></use></svg><span>Deployments</span></button>
+          <button class="nav-item" data-view="sites"><svg><use href="#icon-sites"></use></svg><span>Sites</span></button>
           <span class="nav-group">Configure</span>
-          <button class="nav-item" data-view="providers">Providers</button>
-          <button class="nav-item" data-view="artifacts">Artifacts</button>
+          <button class="nav-item" data-view="providers"><svg><use href="#icon-providers"></use></svg><span>Providers</span></button>
+          <button class="nav-item" data-view="artifacts"><svg><use href="#icon-artifacts"></use></svg><span>Artifacts</span></button>
           <span class="nav-group">Execute</span>
-          <button class="nav-item" data-view="jobs">Orchestration Runs</button>
-          <button class="nav-item" data-view="approvals">Approvals</button>
-          <button class="nav-item" data-view="lifecycle">Lifecycle</button>
+          <button class="nav-item" data-view="jobs"><svg><use href="#icon-jobs"></use></svg><span>Orchestration Runs</span></button>
+          <button class="nav-item" data-view="approvals"><svg><use href="#icon-approvals"></use></svg><span>Approvals</span></button>
+          <button class="nav-item" data-view="lifecycle"><svg><use href="#icon-lifecycle"></use></svg><span>Lifecycle</span></button>
           <span class="nav-group">Admin</span>
-          <button class="nav-item" data-view="settings">Settings</button>
-          <button class="nav-item" data-view="about">About</button>
+          <button class="nav-item" data-view="settings"><svg><use href="#icon-settings"></use></svg><span>Settings</span></button>
+          <button class="nav-item" data-view="about"><svg><use href="#icon-about"></use></svg><span>About</span></button>
         </nav>
         <div class="sidebar-footer">
           <strong>StrataOne Orchestrator</strong>
@@ -596,6 +628,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-metrics1"></script>
+    <script src="./app.js?v=20260603-navicons1"></script>
   </body>
 </html>

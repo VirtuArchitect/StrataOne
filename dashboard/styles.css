@@ -22,6 +22,12 @@
 
 [hidden] { display: none !important; }
 
+.icon-sprite {
+  height: 0;
+  position: absolute;
+  width: 0;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -142,19 +148,46 @@ button.mini {
 }
 
 .nav-item {
+  align-items: center;
   background: transparent;
   border: 0;
   border-radius: 7px;
   color: #c8d2ec;
+  display: flex;
+  gap: 11px;
   justify-content: flex-start;
   min-height: 40px;
   padding: 0 12px;
   text-align: left;
 }
 
+.nav-item svg {
+  color: #9aa3bd;
+  display: block;
+  flex: 0 0 auto;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  fill: none;
+  width: 18px;
+}
+
+.nav-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nav-item.active,
 .nav-item:hover {
   background: linear-gradient(90deg, #4f46d9, #363098);
+  color: white;
+}
+
+.nav-item.active svg,
+.nav-item:hover svg {
   color: white;
 }
 
