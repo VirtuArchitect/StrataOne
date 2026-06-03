@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import time
 
 import typer
 from rich.console import Console
@@ -8,12 +9,14 @@ from rich.table import Table
 
 from strataone.artifacts import ArtifactGenerator
 from strataone.inventory import InventoryReport
+from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import CheckStatus, PreflightReport, PreflightRunner
 from strataone.providers.registry import list_providers
 from strataone.providers.hardware import get_hardware_provider
 from strataone.redfish import RedfishCredentials
 from strataone.state import SiteSpec, load_site_spec
+from strataone.store import StrataStore
 
 app = typer.Typer(
     name="strataone",
@@ -139,6 +142,26 @@ def providers(output_json: bool = typer.Option(False, "--json", help="Print prov
     for provider in provider_list:
         table.add_row(provider.type, provider.name, provider.source, provider.description)
     console.print(table)
+
+
+@app.command()
+def worker(
+    once: bool = typer.Option(False, "--once", help="Run a single queued job and exit."),
+    idle_sleep: float = typer.Option(2.0, help="Seconds to sleep when no job is available."),
+) -> None:
+    """Run queued orchestration jobs from the configured queue backend."""
+    runner = JobRunner(StrataStore())
+    while True:
+        job_id = runner.run_queued_once()
+        if job_id:
+            console.print(f"[green]completed queued job[/green] {job_id}")
+        elif once:
+            console.print("[yellow]no queued job available[/yellow]")
+            return
+        else:
+            time.sleep(idle_sleep)
+        if once:
+            return
 
 
 def _print_summary(spec: SiteSpec) -> None:

@@ -13,9 +13,11 @@ from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
+from strataone.queue import queue_backend
 from strataone.security import ALL_PERMISSIONS, auth_enabled, cors_origins, require_permission
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
+from strataone.validation import validation_summary
 
 class SitePayload(BaseModel):
     site: dict[str, Any]
@@ -197,11 +199,12 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "hashicorp_vault_configured": bool(os.getenv("STRATAONE_VAULT_ADDR")),
         },
         "database": {
-            "mode": "sqlite",
-            "path": str(store.path),
+            "mode": store.backend,
+            "path": str(store.path) if store.backend == "sqlite" else store.postgres_dsn,
             "site_count": len(store.list_sites()),
             "job_count": len(store.list_jobs()),
             "execution_mode": os.getenv("STRATAONE_EXECUTION_MODE", "inline"),
+            "queue_backend": queue_backend(),
         },
         "providers": {
             "plugin_dir": os.getenv("STRATAONE_PLUGIN_DIR", "plugins"),
@@ -224,6 +227,7 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "job_history_retention_days": int(os.getenv("STRATAONE_JOB_RETENTION_DAYS", "90")),
             "configuration_change_tracking": "planned",
         },
+        "validation": validation_summary(),
     }
 
 
@@ -260,6 +264,11 @@ def delete_role(role_name: str, _: Any = manage_access) -> dict[str, bool]:
 @app.get("/access/users")
 def list_users(_: Any = manage_access) -> dict[str, Any]:
     return {"users": [user.model_dump(mode="json") for user in store.list_users()]}
+
+
+@app.get("/validation/oem")
+def oem_validation(_: Any = read_settings) -> dict[str, Any]:
+    return validation_summary()
 
 
 @app.post("/access/users")

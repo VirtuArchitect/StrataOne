@@ -7,9 +7,11 @@ from strataone.inventory import InventoryReport
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.hardware import get_hardware_provider
+from strataone.queue import get_job_queue
 from strataone.redfish import RedfishClient, RedfishCredentials
 from strataone.secrets import resolve_bmc_credentials
 from strataone.store import StrataStore, spec_from_record
+from strataone.validation import live_operation_allowed
 
 
 class JobRunner:
@@ -19,11 +21,22 @@ class JobRunner:
 
     def submit(self, site_name: str, action: str, params: dict[str, Any] | None = None) -> str:
         job = self.store.create_job(site_name, action, params or {})
-        if os.getenv("STRATAONE_EXECUTION_MODE", "inline").lower() == "inline":
+        execution_mode = os.getenv("STRATAONE_EXECUTION_MODE", "inline").lower()
+        queue = get_job_queue()
+        if execution_mode == "inline":
             self.executor.submit(self._run, job.id)
+        elif queue is not None:
+            queue.enqueue(job.id)
         return job.id
 
     def run_queued_once(self) -> str | None:
+        queue = get_job_queue()
+        if queue is not None:
+            job_id = queue.dequeue()
+            if job_id is None:
+                return None
+            self._run(job_id)
+            return job_id
         job = self.store.claim_next_job()
         if job is None:
             return None
@@ -99,6 +112,8 @@ class JobRunner:
         if insecure is None:
             insecure = os.getenv("STRATAONE_BMC_INSECURE", "").lower() in {"1", "true", "yes"}
         if live:
+            if not live_operation_allowed(spec.hardware.vendor, "redfish-virtual-media"):
+                raise ValueError(f"live Redfish virtual media is not lab-validated for provider {spec.hardware.vendor}")
             client = RedfishClient(
                 RedfishCredentials(username=secret.username, password=secret.password),
                 timeout=float(params.get("timeout") or os.getenv("STRATAONE_BMC_TIMEOUT", "10")),

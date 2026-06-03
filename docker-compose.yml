@@ -12,8 +12,14 @@ services:
       STRATAONE_AUTH_ENABLED: ${STRATAONE_AUTH_ENABLED:-true}
       STRATAONE_BOOTSTRAP_TOKEN: ${STRATAONE_BOOTSTRAP_TOKEN:-change-this-token}
       STRATAONE_API_TOKENS: ${STRATAONE_API_TOKENS:-}
-      STRATAONE_EXECUTION_MODE: ${STRATAONE_EXECUTION_MODE:-inline}
+      STRATAONE_STATE_BACKEND: ${STRATAONE_STATE_BACKEND:-postgres}
+      STRATAONE_POSTGRES_DSN: ${STRATAONE_POSTGRES_DSN:-postgresql://strataone:strataone@postgres:5432/strataone}
+      STRATAONE_EXECUTION_MODE: ${STRATAONE_EXECUTION_MODE:-queued}
+      STRATAONE_QUEUE_BACKEND: ${STRATAONE_QUEUE_BACKEND:-redis}
+      STRATAONE_REDIS_URL: ${STRATAONE_REDIS_URL:-redis://redis:6379/0}
       STRATAONE_ENABLE_LIVE_REDFISH: ${STRATAONE_ENABLE_LIVE_REDFISH:-false}
+      STRATAONE_REQUIRE_OEM_VALIDATION: ${STRATAONE_REQUIRE_OEM_VALIDATION:-true}
+      STRATAONE_OEM_VALIDATION_FILE: ${STRATAONE_OEM_VALIDATION_FILE:-.strataone/oem-validation.json}
       STRATAONE_VAULT_PROVIDER: ${STRATAONE_VAULT_PROVIDER:-env}
       STRATAONE_VAULT_FILE: ${STRATAONE_VAULT_FILE:-}
       STRATAONE_VAULT_ADDR: ${STRATAONE_VAULT_ADDR:-}
@@ -21,6 +27,35 @@ services:
       STRATAONE_VAULT_PATH: ${STRATAONE_VAULT_PATH:-secret/data/strataone}
     volumes:
       - ./.strataone:/app/.strataone
+    depends_on:
+      - postgres
+      - redis
+
+  strataone-worker:
+    build:
+      context: .
+    command: ["strataone", "worker"]
+    environment:
+      STRATAONE_STATE_BACKEND: ${STRATAONE_STATE_BACKEND:-postgres}
+      STRATAONE_POSTGRES_DSN: ${STRATAONE_POSTGRES_DSN:-postgresql://strataone:strataone@postgres:5432/strataone}
+      STRATAONE_EXECUTION_MODE: ${STRATAONE_EXECUTION_MODE:-queued}
+      STRATAONE_QUEUE_BACKEND: ${STRATAONE_QUEUE_BACKEND:-redis}
+      STRATAONE_REDIS_URL: ${STRATAONE_REDIS_URL:-redis://redis:6379/0}
+      STRATAONE_ENABLE_LIVE_REDFISH: ${STRATAONE_ENABLE_LIVE_REDFISH:-false}
+      STRATAONE_REQUIRE_OEM_VALIDATION: ${STRATAONE_REQUIRE_OEM_VALIDATION:-true}
+      STRATAONE_OEM_VALIDATION_FILE: ${STRATAONE_OEM_VALIDATION_FILE:-.strataone/oem-validation.json}
+      STRATAONE_VAULT_PROVIDER: ${STRATAONE_VAULT_PROVIDER:-env}
+      STRATAONE_VAULT_FILE: ${STRATAONE_VAULT_FILE:-}
+      STRATAONE_VAULT_ADDR: ${STRATAONE_VAULT_ADDR:-}
+      STRATAONE_VAULT_TOKEN: ${STRATAONE_VAULT_TOKEN:-}
+      STRATAONE_VAULT_PATH: ${STRATAONE_VAULT_PATH:-secret/data/strataone}
+      STRATAONE_BMC_USERNAME: ${STRATAONE_BMC_USERNAME:-}
+      STRATAONE_BMC_PASSWORD: ${STRATAONE_BMC_PASSWORD:-}
+    volumes:
+      - ./.strataone:/app/.strataone
+    depends_on:
+      - postgres
+      - redis
 
   strataone-dashboard:
     image: nginx:1.27-alpine
@@ -30,3 +65,22 @@ services:
       - ./dashboard:/usr/share/nginx/html:ro
     depends_on:
       - strataone-api
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-strataone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-strataone}
+      POSTGRES_DB: ${POSTGRES_DB:-strataone}
+    volumes:
+      - strataone-postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - strataone-redis:/data
+
+volumes:
+  strataone-postgres:
+  strataone-redis:

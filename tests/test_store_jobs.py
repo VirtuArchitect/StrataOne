@@ -59,6 +59,30 @@ def test_job_runner_can_leave_jobs_for_durable_worker(tmp_path: Path, monkeypatc
     assert job.result["valid"] is True
 
 
+def test_job_runner_dispatches_queued_jobs_to_queue_backend(tmp_path: Path, monkeypatch) -> None:
+    dispatched = []
+
+    class FakeQueue:
+        def enqueue(self, job_id: str) -> None:
+            dispatched.append(job_id)
+
+        def dequeue(self) -> str | None:
+            return dispatched.pop(0) if dispatched else None
+
+    monkeypatch.setenv("STRATAONE_EXECUTION_MODE", "queued")
+    monkeypatch.setattr("strataone.jobs.get_job_queue", lambda: FakeQueue())
+    store = StrataStore(tmp_path / "strataone.db")
+    store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
+    runner = JobRunner(store)
+
+    job_id = runner.submit("branch-001", "validate")
+
+    assert dispatched == [job_id]
+    assert store.get_job(job_id).status == "queued"
+    assert runner.run_queued_once() == job_id
+    assert store.get_job(job_id).status == "succeeded"
+
+
 def test_preflight_job_uses_latest_stored_inventory(tmp_path: Path) -> None:
     store = StrataStore(tmp_path / "strataone.db")
     spec = load_site_spec(Path("examples/azure-local-branch.yaml"))

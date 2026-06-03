@@ -140,15 +140,18 @@ Or create a `.env` file from `.env.example`.
 
 The Compose stack currently runs:
 
-- `strataone-api`: FastAPI service for validation, planning, and preflight
+- `strataone-api`: FastAPI service for validation, planning, and orchestration requests
+- `strataone-worker`: queue worker for Redis-dispatched orchestration jobs
 - `strataone-dashboard`: static operational dashboard served by Nginx
+- `postgres`: durable state backend for sites, jobs, inventory, users, and roles
+- `redis`: production job dispatch queue
 
-Runtime state defaults to `.strataone/`:
+Runtime state uses PostgreSQL and Redis in Compose. Local development can still use SQLite by setting `STRATAONE_STATE_BACKEND=sqlite`:
 
 - `.strataone/strataone.db`
 - `.strataone/artifacts/`
 
-Set `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override those paths.
+Set `STRATAONE_POSTGRES_DSN`, `STRATAONE_REDIS_URL`, `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override runtime paths and backends.
 Set `STRATAONE_CORS_ORIGINS` to the trusted dashboard/API origins allowed to call the API. Set `STRATAONE_SEED_EXAMPLE=false` for production-like environments so the example site is not inserted automatically.
 
 Protected API routes enforce bearer-token authentication when `STRATAONE_AUTH_ENABLED=true`. Use a bootstrap token for initial administration, or provide named API tokens mapped to RBAC roles:
@@ -205,6 +208,7 @@ POST /sites/{site_name}/jobs/{action}
 GET  /jobs
 GET  /jobs/{job_id}
 POST /jobs/worker/run-once
+GET  /validation/oem
 GET  /sites/{site_name}/inventory
 POST /sites/{site_name}/inventory
 POST /sites/{site_name}/artifacts
@@ -233,7 +237,38 @@ Current deployment is approval-oriented and staged:
 
 The `mount-iso` job defaults to a simulated execution contract. Set `STRATAONE_ENABLE_LIVE_REDFISH=true` to execute Redfish `VirtualMedia.InsertMedia` and one-time CD/DVD boot override calls against discovered BMC endpoints.
 
-Job execution defaults to inline background workers. Set `STRATAONE_EXECUTION_MODE=queued` when an external worker should claim durable SQLite jobs through `POST /jobs/worker/run-once`. The schema now persists job parameters so this can evolve cleanly toward PostgreSQL plus Redis, NATS, Celery, or another enterprise queue.
+Production job execution uses PostgreSQL for durable state and Redis for dispatch:
+
+```env
+STRATAONE_STATE_BACKEND=postgres
+STRATAONE_POSTGRES_DSN=postgresql://strataone:strataone@postgres:5432/strataone
+STRATAONE_EXECUTION_MODE=queued
+STRATAONE_QUEUE_BACKEND=redis
+STRATAONE_REDIS_URL=redis://redis:6379/0
+```
+
+Run a worker directly with:
+
+```bash
+strataone worker
+```
+
+Set `STRATAONE_REQUIRE_OEM_VALIDATION=true` to require OEM lab validation evidence before live Redfish operations are allowed. Validation records are read from `STRATAONE_OEM_VALIDATION_FILE`:
+
+```json
+{
+  "records": [
+    {
+      "provider": "dell-idrac",
+      "operation": "redfish-virtual-media",
+      "status": "validated",
+      "lab": "edge-lab-1",
+      "validated_at": "2026-06-03T12:00:00Z",
+      "evidence": "change-12345"
+    }
+  ]
+}
+```
 
 Run tests:
 
@@ -282,10 +317,10 @@ This repository currently contains the first buildable foundation:
 - Read-only Redfish inventory collection
 - Preflight readiness checks
 - FastAPI service
-- Docker Compose stack
-- Persistent SQLite site registry
-- Background job execution
-- Durable queued job parameters and worker claim endpoint
+- Docker Compose stack with API, dashboard, worker, PostgreSQL, and Redis
+- PostgreSQL-capable persistent state backend with SQLite local fallback
+- Redis-backed queue dispatch with CLI/API worker execution
+- Durable queued job parameters
 - Bearer-token authentication and RBAC route enforcement
 - Environment, file, and HashiCorp Vault-compatible BMC secret providers
 - Dashboard-driven Redfish inventory jobs
@@ -299,10 +334,11 @@ This repository currently contains the first buildable foundation:
 - Platform provider contract
 - Generic Redfish hardware provider
 - Azure Local, vSphere, AHV, Proxmox, and generic platform providers
+- OEM validation registry for live Redfish/provider execution gates
 - Example Azure Local branch configuration
 - Unit and integration-style Redfish mock tests
 
-The next implementation milestone is to replace the SQLite worker claim path with a production queue backend and implement provider-specific Azure Local execution steps behind explicit approval gates.
+The next implementation milestone is to implement provider-specific Azure Local execution steps behind explicit approval gates and validate each OEM provider in a hardware lab.
 
 ## Production Readiness Notes
 
@@ -312,9 +348,11 @@ StrataOne now includes the core controls expected before lab production validati
 - CORS is configurable by environment and wildcard origins are rejected when auth is enabled.
 - BMC credentials can be resolved from env, local secret files, or a Vault-compatible API.
 - Redfish virtual media and boot override calls have mock integration coverage.
+- PostgreSQL and Redis are available as the production state and queue backend.
+- Live Redfish operations can be blocked unless OEM lab validation evidence is registered.
 
 Remaining enterprise hardening items:
 
-- SQLite is still best suited to local/dev and small lab installs; multi-operator production should move to PostgreSQL plus Redis/NATS or an equivalent queue.
-- Live Redfish execution should be validated per OEM in a hardware lab before broad rollout.
+- SQLite is still best suited to local/dev and small lab installs.
+- Live Redfish execution still requires real OEM hardware validation before broad rollout.
 - Provider implementations beyond Azure Local planning are currently scaffolds unless explicitly implemented and validated.

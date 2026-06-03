@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -62,13 +62,49 @@ class UserRecord(BaseModel):
     updated_at: str
 
 
+class DbConnection(Protocol):
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
+        ...
+
+    def __enter__(self) -> "DbConnection":
+        ...
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        ...
+
+
+class PostgresConnection:
+    def __init__(self, dsn: str) -> None:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("PostgreSQL backend requires the psycopg[binary] package") from exc
+        self._conn = psycopg.connect(dsn, row_factory=dict_row)
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
+        return self._conn.execute(_postgres_sql(sql), params)
+
+    def __enter__(self) -> "PostgresConnection":
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._conn.__exit__(exc_type, exc, tb)
+
+
 class StrataStore:
     def __init__(self, path: Path | None = None) -> None:
+        self.backend = os.getenv("STRATAONE_STATE_BACKEND", "sqlite").lower()
+        self.postgres_dsn = os.getenv("STRATAONE_POSTGRES_DSN", "postgresql://strataone:strataone@postgres:5432/strataone")
         self.path = path or Path(os.getenv("STRATAONE_DB", ".strataone/strataone.db"))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.backend == "sqlite":
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> DbConnection:
+        if self.backend == "postgres":
+            return PostgresConnection(self.postgres_dsn)
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -104,7 +140,6 @@ class StrataStore:
                 )
                 """
             )
-            self._ensure_column(conn, "jobs", "params_json", "TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS inventory (
@@ -141,6 +176,8 @@ class StrataStore:
                 )
                 """
             )
+            if self.backend == "sqlite":
+                self._ensure_column(conn, "jobs", "params_json", "TEXT")
         self.seed_access_defaults()
 
     def upsert_site(self, spec: SiteSpec) -> SiteRecord:
@@ -205,12 +242,33 @@ class StrataStore:
             conn.execute("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?", ("running", _now(), job_id))
 
     def claim_next_job(self) -> JobRecord | None:
+        if self.backend == "postgres":
+            return self._claim_next_job_postgres()
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1", ("queued",)).fetchone()
             if row is None:
                 return None
             conn.execute("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?", ("running", _now(), row["id"]))
         return self.get_job(row["id"])
+
+    def _claim_next_job_postgres(self) -> JobRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, started_at = ?
+                WHERE id = (
+                    SELECT id FROM jobs
+                    WHERE status = ?
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING *
+                """,
+                ("running", _now(), "queued"),
+            ).fetchone()
+        return self._job_from_row(row) if row else None
 
     def finish_job(self, job_id: str, result: dict[str, Any]) -> None:
         with self._connect() as conn:
@@ -484,3 +542,7 @@ def spec_from_record(record: SiteRecord) -> SiteSpec:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _postgres_sql(sql: str) -> str:
+    return sql.replace("?", "%s")
