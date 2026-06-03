@@ -33,6 +33,7 @@
           <button class="nav-item" data-view="lifecycle">Lifecycle</button>
           <span class="nav-group">Admin</span>
           <button class="nav-item" data-view="settings">Settings</button>
+          <button class="nav-item" data-view="about">About</button>
         </nav>
         <div class="sidebar-footer">
           <strong>StrataOne Orchestrator</strong>
@@ -512,6 +513,54 @@
             </section>
           </div>
         </section>
+
+        <section class="view" id="view-about" hidden>
+          <div class="layout-grid">
+            <div class="panel span-7">
+              <div class="panel-header">
+                <div>
+                  <h2>About StrataOne</h2>
+                  <span>Product identity, version, and project ownership</span>
+                </div>
+              </div>
+              <div class="about-hero">
+                <img class="about-mark" src="./assets/veridian-mark-teal.svg" alt="Veridian mark" />
+                <div>
+                  <strong>StrataOne Infrastructure Orchestrator</strong>
+                  <span>Vendor-agnostic, hypervisor-agnostic zero-touch infrastructure orchestration.</span>
+                </div>
+              </div>
+              <div class="settings-grid about-grid" id="aboutGrid"></div>
+            </div>
+            <div class="panel span-5">
+              <div class="panel-header">
+                <div>
+                  <h2>Product Scope</h2>
+                  <span>Current enterprise preview capabilities</span>
+                </div>
+              </div>
+              <ol class="flow-list">
+                <li><strong>Deployment orchestration</strong><span>Desired-state sites, plans, preflight, artifacts, approvals, and queued runs.</span></li>
+                <li><strong>Provider abstraction</strong><span>Hardware and platform provider catalog with configuration and capability matrix.</span></li>
+                <li><strong>Operational governance</strong><span>RBAC, local sessions, audit log, approvals, and lifecycle workflows.</span></li>
+                <li><strong>Azure Local first</strong><span>Azure Local deployment contracts with vendor-neutral Redfish foundations.</span></li>
+              </ol>
+            </div>
+            <div class="panel span-12">
+              <div class="panel-header">
+                <div>
+                  <h2>Release Notes</h2>
+                  <span>Highlights from the current preview build</span>
+                </div>
+              </div>
+              <div class="settings-list about-release-list">
+                <div class="settings-row"><div><strong>Operational console</strong><span>Enterprise dashboard with deployments, sites, runs, providers, artifacts, lifecycle, settings, and about views.</span></div></div>
+                <div class="settings-row"><div><strong>Governed execution</strong><span>Approval queue, approve-and-run, job detail timeline, live event stream, session revoke, and audit views.</span></div></div>
+                <div class="settings-row"><div><strong>Deployment product workflow</strong><span>Deployment detail page, readiness validation, inventory comparison, artifact browsing, and provider matrix.</span></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -530,6 +579,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-features2"></script>
+    <script src="./app.js?v=20260603-about1"></script>
   </body>
 </html>

@@ -1047,10 +1047,54 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.setting-card a {
+  color: var(--teal);
+  text-decoration: none;
+}
+
+.setting-card a:hover { text-decoration: underline; }
+
 .settings-list {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+}
+
+.about-hero {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 16px;
+  padding: 18px;
+}
+
+.about-mark {
+  height: 58px;
+  width: 58px;
+}
+
+.about-hero strong,
+.about-hero span {
+  display: block;
+}
+
+.about-hero strong {
+  font-size: 20px;
+}
+
+.about-hero span {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.about-grid {
+  padding: 16px;
+}
+
+.about-release-list {
+  margin-top: 0;
+  padding: 14px;
 }
 
 .settings-panel h3 {

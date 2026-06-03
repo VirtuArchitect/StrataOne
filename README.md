@@ -4,6 +4,8 @@ StrataOne is a vendor-agnostic, hypervisor-agnostic zero-touch orchestration fra
 
 It is designed for enterprise edge, branch, ROBO, private cloud, and hybrid cloud environments where hardware vendors, hypervisors, and management planes vary by site.
 
+See [CHANGELOG.md](CHANGELOG.md) for release notes and feature history.
+
 ## Vision
 
 StrataOne turns a desired-state site definition into a repeatable deployment and lifecycle workflow:

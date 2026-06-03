@@ -28,6 +28,17 @@ const state = {
   ],
 };
 
+const productInfo = {
+  name: "StrataOne",
+  edition: "Enterprise preview",
+  version: "0.1.0",
+  developer: "John Goulden",
+  organization: "VirtuArchitect",
+  repository: "https://github.com/VirtuArchitect/StrataOne",
+  license: "MIT",
+  apiVersion: "0.1.0",
+};
+
 const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
 
 const els = {
@@ -57,6 +68,7 @@ const els = {
   deploymentDetailSubtitle: document.querySelector("#deploymentDetailSubtitle"),
   deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
   providerMatrix: document.querySelector("#providerMatrix"),
+  aboutGrid: document.querySelector("#aboutGrid"),
   settingsTitle: document.querySelector("#settingsTitle"),
   settingsSubtitle: document.querySelector("#settingsSubtitle"),
   settingsContent: document.querySelector("#settingsContent"),
@@ -93,6 +105,7 @@ const viewCopy = {
   artifacts: ["Artifacts", "Generate and inspect deployment bundles for selected sites."],
   lifecycle: ["Lifecycle", "Plan Day-2 controls such as drift, updates, and node replacement."],
   settings: ["Settings", "Configure access posture, database, providers, artifacts, and audit policy."],
+  about: ["About", "Version, ownership, licensing, and product information."],
 };
 
 const settingsCopy = {
@@ -141,6 +154,7 @@ renderAuthState();
 renderNodeEditor();
 renderLifecycle("firmware");
 renderDeploymentSummary(exampleSpec());
+renderAbout();
 refreshAll();
 setInterval(refreshJobs, 2500);
 
@@ -872,6 +886,23 @@ function renderProviders() {
       </div>
     </div>
   `).join("");
+}
+
+function renderAbout() {
+  if (!els.aboutGrid) return;
+  els.aboutGrid.innerHTML = `
+    ${settingCard("Product", productInfo.name)}
+    ${settingCard("Edition", productInfo.edition)}
+    ${settingCard("Version", productInfo.version)}
+    ${settingCard("API Version", productInfo.apiVersion)}
+    ${settingCard("Developer", productInfo.developer)}
+    ${settingCard("Organization", productInfo.organization)}
+    ${settingCard("License", productInfo.license)}
+    <div class="setting-card">
+      <span>GitHub</span>
+      <strong><a href="${productInfo.repository}" target="_blank" rel="noreferrer">VirtuArchitect/StrataOne</a></strong>
+    </div>
+  `;
 }
 
 function renderProviderMatrix() {
