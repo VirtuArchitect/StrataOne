@@ -15,6 +15,7 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 - Provider detail configuration templates for faster provider onboarding.
 - Credential references in jobs, executable discovery plans, ISO registry, ISO eject, and job cancel/retry controls.
 - Vendor mark badges beside provider names across catalog, matrix, settings, and detail views.
+- Discovery import into managed sites, ISO reachability validation, secret reference testing, and configurable approval policy rules.
 
 ### Fixed
 

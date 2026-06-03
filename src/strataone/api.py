@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
+import requests
 
 from strataone.artifacts import ArtifactGenerator
 from strataone.inventory import InventoryReport
@@ -91,11 +92,31 @@ class DiscoveryPayload(BaseModel):
     credential_ref: str | None = None
 
 
+class DiscoveryImportPayload(BaseModel):
+    site_name: str
+    location: str = "discovered"
+    deployment_model: str = "edge-hci"
+    platform: str = "azure-local"
+    selected_bmc_ips: list[str] = []
+    azure_subscription_id: str = "00000000-0000-0000-0000-000000000000"
+    azure_tenant_id: str = "00000000-0000-0000-0000-000000000000"
+    azure_resource_group: str | None = None
+    azure_region: str = "westeurope"
+
+
 class IsoPayload(BaseModel):
     name: str
     uri: HttpUrl
     checksum: str | None = None
     checksum_algorithm: str = "sha256"
+
+
+class ApprovalPolicyPayload(BaseModel):
+    action: str
+    enabled: bool = True
+    approver_roles: list[str] = []
+    min_approvals: int = 1
+    expires_minutes: int = 1440
 
 
 class ApprovalDecisionPayload(BaseModel):
@@ -381,6 +402,7 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "health": "/health",
             "session_timeout_minutes": int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60")),
             "approval_required_actions": sorted(_approval_required_actions()),
+            "approval_policies": [item.model_dump(mode="json") for item in store.list_approval_policies()],
         },
         "artifacts": {
             "output_dir": os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts"),
@@ -425,6 +447,23 @@ def delete_secret_ref(secret_name: str, context: AuthContext = manage_settings) 
     deleted = store.delete_secret_ref(secret_name)
     store.add_audit(context.username, "secret.ref.delete", f"secret:{secret_name}", {"deleted": deleted})
     return {"deleted": deleted}
+
+
+@app.post("/secrets/{secret_name}/test")
+def test_secret_ref(secret_name: str, context: AuthContext = manage_settings) -> dict[str, Any]:
+    secret = store.get_secret_ref(secret_name)
+    if secret is None:
+        raise HTTPException(status_code=404, detail="secret reference not found")
+    resolved = resolve_bmc_credentials_from_ref(secret)
+    result = {
+        "name": secret.name,
+        "type": secret.type,
+        "provider": secret.provider,
+        "resolved": resolved is not None,
+        "status": "resolved" if resolved else "unresolved",
+    }
+    store.add_audit(context.username, "secret.ref.test", f"secret:{secret_name}", result)
+    return result
 
 
 @app.get("/discovery")
@@ -492,6 +531,55 @@ def delete_discovery(run_id: str, context: AuthContext = Depends(require_permiss
     return {"deleted": deleted}
 
 
+@app.post("/discovery/{run_id}/import")
+def import_discovery(run_id: str, payload: DiscoveryImportPayload, context: AuthContext = Depends(require_permission("create-sites", store))) -> dict[str, Any]:
+    run = store.get_discovery_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="discovery run not found")
+    selected = set(payload.selected_bmc_ips)
+    candidates = [
+        candidate for candidate in run.result.get("candidates", [])
+        if not selected or candidate.get("bmc_ip") in selected
+    ]
+    if not candidates:
+        raise HTTPException(status_code=422, detail="no discovery candidates selected")
+    nodes = [
+        {
+            "serial": _candidate_serial(candidate, index),
+            "bmc_ip": candidate["bmc_ip"],
+            "role": "host",
+        }
+        for index, candidate in enumerate(candidates, start=1)
+        if candidate.get("bmc_ip")
+    ]
+    spec = SiteSpec.model_validate(
+        {
+            "site": {
+                "name": payload.site_name.strip(),
+                "location": payload.location,
+                "deployment_model": payload.deployment_model,
+            },
+            "hardware": {"vendor": run.provider, "nodes": nodes},
+            "network": {"management_vlan": 100, "storage_vlan": 110, "vm_vlan": 120, "dns_servers": [], "ntp_servers": []},
+            "platform": {
+                "type": payload.platform,
+                "topology": "discovered",
+                "cluster_name": payload.site_name.strip(),
+                "azure": {
+                    "subscription_id": payload.azure_subscription_id,
+                    "tenant_id": payload.azure_tenant_id,
+                    "resource_group": payload.azure_resource_group or f"rg-{payload.site_name.strip()}",
+                    "region": payload.azure_region,
+                },
+            },
+            "workloads": {},
+        }
+    )
+    site = store.upsert_site(spec)
+    store.add_audit(context.username, "discovery.import", f"site:{site.name}", {"discovery_id": run_id, "nodes": len(nodes)})
+    return site.model_dump(mode="json")
+
+
 @app.get("/isos")
 def list_isos(_: Any = read_sites) -> dict[str, Any]:
     return {"isos": [item.model_dump(mode="json") for item in store.list_isos()]}
@@ -511,6 +599,66 @@ def save_iso(payload: IsoPayload, context: AuthContext = Depends(require_permiss
 def delete_iso(iso_name: str, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, bool]:
     deleted = store.delete_iso(iso_name)
     store.add_audit(context.username, "iso.delete", f"iso:{iso_name}", {"deleted": deleted})
+    return {"deleted": deleted}
+
+
+@app.post("/isos/{iso_name}/validate")
+def validate_iso(iso_name: str, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
+    iso = store.get_iso(iso_name)
+    if iso is None:
+        raise HTTPException(status_code=404, detail="iso not found")
+    try:
+        response = requests.head(iso.uri, timeout=float(os.getenv("STRATAONE_ISO_VALIDATE_TIMEOUT", "5")), allow_redirects=True)
+        reachable = response.status_code < 400
+        content_length = response.headers.get("Content-Length")
+        status = "validated" if reachable else "unreachable"
+    except Exception as exc:
+        reachable = False
+        content_length = None
+        status = "unreachable"
+        error = str(exc)
+    else:
+        error = None
+    updated = store.update_iso_status(iso_name, status)
+    result = {
+        "name": iso.name,
+        "uri": iso.uri,
+        "reachable": reachable,
+        "status": status,
+        "checksum_registered": bool(iso.checksum),
+        "content_length": content_length,
+        "error": error,
+        "record": updated.model_dump(mode="json") if updated else iso.model_dump(mode="json"),
+    }
+    store.add_audit(context.username, "iso.validate", f"iso:{iso_name}", {"status": status, "reachable": reachable})
+    return result
+
+
+@app.get("/approval-policy")
+def list_approval_policy(_: Any = read_settings) -> dict[str, Any]:
+    return {"policies": [item.model_dump(mode="json") for item in store.list_approval_policies()]}
+
+
+@app.post("/approval-policy")
+def save_approval_policy(payload: ApprovalPolicyPayload, context: AuthContext = manage_settings) -> dict[str, Any]:
+    action = payload.action.strip()
+    if not action:
+        raise HTTPException(status_code=422, detail="action is required")
+    policy = store.upsert_approval_policy(
+        action,
+        enabled=payload.enabled,
+        approver_roles=payload.approver_roles,
+        min_approvals=payload.min_approvals,
+        expires_minutes=payload.expires_minutes,
+    )
+    store.add_audit(context.username, "approval.policy.upsert", f"approval-policy:{policy.id}", policy.model_dump(mode="json"))
+    return policy.model_dump(mode="json")
+
+
+@app.delete("/approval-policy/{policy_id}")
+def delete_approval_policy(policy_id: str, context: AuthContext = manage_settings) -> dict[str, bool]:
+    deleted = store.delete_approval_policy(policy_id)
+    store.add_audit(context.username, "approval.policy.delete", f"approval-policy:{policy_id}", {"deleted": deleted})
     return {"deleted": deleted}
 
 
@@ -828,6 +976,9 @@ def _permission_for_action(action: str) -> str:
 def _approval_required(action: str, params: dict[str, Any]) -> bool:
     if not os.getenv("STRATAONE_REQUIRE_APPROVALS", "true").lower() in {"1", "true", "yes", "on"}:
         return False
+    policy = store.get_approval_policy(action)
+    if policy is not None:
+        return policy.enabled
     return action in _approval_required_actions()
 
 
@@ -873,6 +1024,12 @@ def _provider_config_template(provider_name: str, provider_type: str) -> dict[st
         "approval_required": True,
         "lab_validated": False,
     }
+
+
+def _candidate_serial(candidate: dict[str, Any], index: int) -> str:
+    value = candidate.get("serial") or candidate.get("uuid") or candidate.get("bmc_ip") or f"node-{index}"
+    serial = "".join(char if char.isalnum() or char in "_.:-" else "-" for char in str(value))
+    return serial[:64] or f"node-{index}"
 
 
 def _artifact_site_dir(site_name: str) -> Path:

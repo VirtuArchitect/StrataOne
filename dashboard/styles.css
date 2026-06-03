@@ -1067,6 +1067,11 @@ textarea {
   border-width: 0 0 1px;
 }
 
+.approval-policy-form {
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+
 .discovery-form {
   border-radius: 0;
   border-width: 0 0 1px;

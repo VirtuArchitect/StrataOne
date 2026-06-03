@@ -84,6 +84,17 @@ class ApprovalRecord(BaseModel):
     updated_at: str
 
 
+class ApprovalPolicyRecord(BaseModel):
+    id: str
+    action: str
+    enabled: bool = True
+    approver_roles: list[str] = []
+    min_approvals: int = 1
+    expires_minutes: int = 1440
+    created_at: str
+    updated_at: str
+
+
 class JobEventRecord(BaseModel):
     id: str
     job_id: str
@@ -296,6 +307,20 @@ class StrataStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS approval_policies (
+                    id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    approver_roles_json TEXT NOT NULL,
+                    min_approvals INTEGER NOT NULL,
+                    expires_minutes INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS job_events (
                     id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
@@ -377,6 +402,7 @@ class StrataStore:
             ("002_audit_approval_events", "Audit log, approval gates, job events, and provider configs"),
             ("003_secrets_discovery", "Secret references and discovery run history"),
             ("004_iso_job_controls", "ISO registry and operator job control primitives"),
+            ("005_approval_policy", "Configurable approval policy rules"),
         ]
         applied = {item.version for item in self.list_migrations()}
         with self._connect() as conn:
@@ -815,6 +841,51 @@ class StrataStore:
             rows = conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()
         return [self._approval_from_row(row) for row in rows]
 
+    def upsert_approval_policy(
+        self,
+        action: str,
+        *,
+        enabled: bool = True,
+        approver_roles: list[str] | None = None,
+        min_approvals: int = 1,
+        expires_minutes: int = 1440,
+    ) -> ApprovalPolicyRecord:
+        now = _now()
+        existing = self.get_approval_policy(action)
+        policy_id = existing.id if existing else str(uuid.uuid4())
+        created_at = existing.created_at if existing else now
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO approval_policies (id, action, enabled, approver_roles_json, min_approvals, expires_minutes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    action=excluded.action,
+                    enabled=excluded.enabled,
+                    approver_roles_json=excluded.approver_roles_json,
+                    min_approvals=excluded.min_approvals,
+                    expires_minutes=excluded.expires_minutes,
+                    updated_at=excluded.updated_at
+                """,
+                (policy_id, action, int(enabled), json.dumps(approver_roles or []), max(1, min_approvals), max(1, expires_minutes), created_at, now),
+            )
+        return self.get_approval_policy(action)  # type: ignore[return-value]
+
+    def get_approval_policy(self, action: str) -> ApprovalPolicyRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM approval_policies WHERE action = ? ORDER BY updated_at DESC LIMIT 1", (action,)).fetchone()
+        return self._approval_policy_from_row(row) if row else None
+
+    def list_approval_policies(self) -> list[ApprovalPolicyRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM approval_policies ORDER BY action").fetchall()
+        return [self._approval_policy_from_row(row) for row in rows]
+
+    def delete_approval_policy(self, policy_id: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM approval_policies WHERE id = ?", (policy_id,))
+        return result.rowcount > 0
+
     def add_job_event(self, job_id: str, level: str, message: str, detail: dict[str, Any] | None = None) -> JobEventRecord:
         event_id = str(uuid.uuid4())
         now = _now()
@@ -941,6 +1012,11 @@ class StrataStore:
             )
         return self.get_iso(name)  # type: ignore[return-value]
 
+    def update_iso_status(self, name: str, status: str) -> IsoRecord | None:
+        with self._connect() as conn:
+            conn.execute("UPDATE iso_registry SET status = ?, updated_at = ? WHERE name = ?", (status, _now(), name))
+        return self.get_iso(name)
+
     def get_iso(self, name: str) -> IsoRecord | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM iso_registry WHERE name = ?", (name,)).fetchone()
@@ -1036,6 +1112,18 @@ class StrataStore:
             requested_by=row["requested_by"],
             approved_by=row["approved_by"],
             detail=json.loads(row["detail_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _approval_policy_from_row(self, row) -> ApprovalPolicyRecord:
+        return ApprovalPolicyRecord(
+            id=row["id"],
+            action=row["action"],
+            enabled=bool(row["enabled"]),
+            approver_roles=json.loads(row["approver_roles_json"]),
+            min_approvals=row["min_approvals"],
+            expires_minutes=row["expires_minutes"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

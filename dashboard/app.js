@@ -983,6 +983,7 @@ function renderDiscovery() {
       <div class="row-actions">
         <button class="mini secondary" data-show-discovery="${escapeHtml(run.id)}">Inspect</button>
         <button class="mini" data-execute-discovery="${escapeHtml(run.id)}">Execute</button>
+        <button class="mini secondary" data-import-discovery="${escapeHtml(run.id)}">Import</button>
         <button class="mini danger" data-delete-discovery="${escapeHtml(run.id)}">Delete</button>
       </div>
     </div>
@@ -1004,7 +1005,10 @@ function renderIsos() {
         <span>${escapeHtml(iso.uri)}</span>
         <span>${iso.checksum ? `${escapeHtml(iso.checksum_algorithm)} ${escapeHtml(iso.checksum)}` : "No checksum registered"}</span>
       </div>
-      <button class="mini danger" data-delete-iso="${escapeHtml(iso.name)}">Delete</button>
+      <div class="row-actions">
+        <button class="mini secondary" data-validate-iso="${escapeHtml(iso.name)}">Validate</button>
+        <button class="mini danger" data-delete-iso="${escapeHtml(iso.name)}">Delete</button>
+      </div>
     </div>
   `).join("") || `<div class="settings-empty">No ISOs registered.</div>`;
 }
@@ -1292,7 +1296,10 @@ function renderSettingsSection(section, data) {
               <span>${escapeHtml(secret.provider)} - ${escapeHtml(secret.reference)}</span>
               <span>Updated ${formatDate(secret.updated_at)}</span>
             </div>
-            <button class="mini danger" data-delete-secret="${escapeHtml(secret.name)}">Delete</button>
+            <div class="row-actions">
+              <button class="mini secondary" data-test-secret="${escapeHtml(secret.name)}">Test</button>
+              <button class="mini danger" data-delete-secret="${escapeHtml(secret.name)}">Delete</button>
+            </div>
           </div>
         `).join("") || `<div class="settings-empty">No secret references configured.</div>`}
       </div>
@@ -1306,6 +1313,33 @@ function renderSettingsSection(section, data) {
         ${settingCard("Health", data.health)}
         ${settingCard("Session Timeout", `${data.session_timeout_minutes} minutes`)}
         ${settingCard("Approval Actions", (data.approval_required_actions || []).join(", ") || "none")}
+      </div>
+      <form class="settings-form approval-policy-form" id="approvalPolicyForm">
+        <h3>Create / Edit Approval Policy</h3>
+        <div class="form-grid">
+          <label>Action<input id="policyAction" placeholder="deploy-azure-local" /></label>
+          <label>Approver Roles<input id="policyRoles" placeholder="Platform Admin, Change Manager" /></label>
+          <label>Minimum Approvals<input id="policyMinApprovals" type="number" min="1" value="1" /></label>
+          <label>Expires Minutes<input id="policyExpiresMinutes" type="number" min="1" value="1440" /></label>
+          <label><input id="policyEnabled" type="checkbox" checked /> Approval required</label>
+        </div>
+        <button type="submit">Save Approval Policy</button>
+      </form>
+      <h3>Approval Policies</h3>
+      <div class="settings-list">
+        ${(data.approval_policies || []).map((policy) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(policy.action)} <span class="badge">${policy.enabled ? "enabled" : "disabled"}</span></strong>
+              <span>${escapeHtml((policy.approver_roles || []).join(", ") || "Any approver role")} - ${escapeHtml(policy.min_approvals)} approval(s)</span>
+              <span>Expires after ${escapeHtml(policy.expires_minutes)} minutes</span>
+            </div>
+            <div class="row-actions">
+              <button class="mini secondary" data-edit-policy="${escapeHtml(policy.id)}">Edit</button>
+              <button class="mini danger" data-delete-policy="${escapeHtml(policy.id)}">Delete</button>
+            </div>
+          </div>
+        `).join("") || `<div class="settings-empty">No approval policies configured.</div>`}
       </div>
     `;
   }
@@ -1448,6 +1482,12 @@ async function handleDocumentActions(event) {
     await loadSettings();
     return;
   }
+  const testSecret = event.target.closest("[data-test-secret]");
+  if (testSecret) {
+    const result = await apiPost(`/secrets/${encodeURIComponent(testSecret.dataset.testSecret)}/test`, {});
+    writeResult("secret reference test", result);
+    return;
+  }
   const showDiscovery = event.target.closest("[data-show-discovery]");
   if (showDiscovery) {
     const run = state.discovery.find((item) => item.id === showDiscovery.dataset.showDiscovery);
@@ -1459,6 +1499,20 @@ async function handleDocumentActions(event) {
     const result = await apiPost(`/discovery/${encodeURIComponent(executeDiscovery.dataset.executeDiscovery)}/execute`, {});
     writeResult("discovery executed", result);
     await loadDiscovery();
+    return;
+  }
+  const importDiscovery = event.target.closest("[data-import-discovery]");
+  if (importDiscovery) {
+    const siteName = value("#discoveryImportSite") || `import-${importDiscovery.dataset.importDiscovery.slice(0, 8)}`;
+    const result = await apiPost(`/discovery/${encodeURIComponent(importDiscovery.dataset.importDiscovery)}/import`, {
+      site_name: siteName,
+      location: value("#discoveryImportLocation") || "discovered",
+      selected_bmc_ips: [],
+    });
+    writeResult("discovery imported", result);
+    state.selectedSite = result.name;
+    await loadSites();
+    showView("sites");
     return;
   }
   const deleteDiscovery = event.target.closest("[data-delete-discovery]");
@@ -1473,6 +1527,32 @@ async function handleDocumentActions(event) {
     const result = await apiDelete(`/isos/${encodeURIComponent(deleteIso.dataset.deleteIso)}`);
     writeResult("iso deleted", result);
     await loadIsos();
+    return;
+  }
+  const validateIso = event.target.closest("[data-validate-iso]");
+  if (validateIso) {
+    const result = await apiPost(`/isos/${encodeURIComponent(validateIso.dataset.validateIso)}/validate`, {});
+    writeResult("iso validation", result);
+    await loadIsos();
+    return;
+  }
+  const editPolicy = event.target.closest("[data-edit-policy]");
+  if (editPolicy) {
+    const policy = state.settings?.api?.approval_policies?.find((item) => item.id === editPolicy.dataset.editPolicy);
+    if (policy) {
+      setValue("#policyAction", policy.action);
+      setValue("#policyRoles", (policy.approver_roles || []).join(", "));
+      setValue("#policyMinApprovals", policy.min_approvals);
+      setValue("#policyExpiresMinutes", policy.expires_minutes);
+      document.querySelector("#policyEnabled").checked = Boolean(policy.enabled);
+    }
+    return;
+  }
+  const deletePolicy = event.target.closest("[data-delete-policy]");
+  if (deletePolicy) {
+    const result = await apiDelete(`/approval-policy/${encodeURIComponent(deletePolicy.dataset.deletePolicy)}`);
+    writeResult("approval policy deleted", result);
+    await loadSettings();
     return;
   }
   const editSite = event.target.closest("[data-edit-site]");
@@ -1611,6 +1691,19 @@ async function handleDocumentSubmit(event) {
     });
     writeResult("iso registered", saved);
     await loadIsos();
+    return;
+  }
+  if (event.target.id === "approvalPolicyForm") {
+    event.preventDefault();
+    const saved = await apiPost("/approval-policy", {
+      action: value("#policyAction"),
+      enabled: checked("#policyEnabled"),
+      approver_roles: csv("#policyRoles"),
+      min_approvals: numberValue("#policyMinApprovals"),
+      expires_minutes: numberValue("#policyExpiresMinutes"),
+    });
+    writeResult("approval policy saved", saved);
+    await loadSettings();
     return;
   }
   if (event.target.id === "roleForm") {

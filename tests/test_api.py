@@ -299,6 +299,23 @@ def test_discovery_run_can_be_deleted() -> None:
     assert deleted.json()["deleted"] is True
 
 
+def test_discovery_candidates_can_be_imported_as_site() -> None:
+    client = TestClient(app)
+    planned = client.post(
+        "/discovery",
+        json={"name": "Import scan", "cidr": "10.0.3.0/30", "provider": "generic-redfish"},
+    ).json()
+
+    imported = client.post(
+        f"/discovery/{planned['id']}/import",
+        json={"site_name": "imported-branch", "location": "lab", "selected_bmc_ips": ["10.0.3.1"]},
+    )
+
+    assert imported.status_code == 200
+    assert imported.json()["name"] == "imported-branch"
+    assert imported.json()["nodes"] == 1
+
+
 def test_iso_registry_round_trips() -> None:
     client = TestClient(app)
 
@@ -311,6 +328,47 @@ def test_iso_registry_round_trips() -> None:
     assert saved.status_code == 200
     assert saved.json()["name"] == "azure-local-test"
     assert any(iso["name"] == "azure-local-test" for iso in listed.json()["isos"])
+
+
+def test_iso_validation_updates_status(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post("/isos", json={"name": "validate-iso", "uri": "https://repo.example.com/validate.iso"})
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Length": "1024"}
+
+    monkeypatch.setattr("strataone.api.requests.head", lambda *args, **kwargs: Response())
+    validated = client.post("/isos/validate-iso/validate")
+
+    assert validated.status_code == 200
+    assert validated.json()["reachable"] is True
+    assert validated.json()["record"]["status"] == "validated"
+
+
+def test_secret_reference_test_reports_resolution(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setenv("BMC_USER_TEST", "admin")
+    monkeypatch.setenv("BMC_PASS_TEST", "secret")
+    client.post(
+        "/secrets",
+        json={"name": "test-bmc", "type": "bmc", "provider": "env", "reference": "BMC_USER_TEST:BMC_PASS_TEST"},
+    )
+
+    tested = client.post("/secrets/test-bmc/test")
+
+    assert tested.status_code == 200
+    assert tested.json()["resolved"] is True
+
+
+def test_approval_policy_can_disable_action_approval() -> None:
+    client = TestClient(app)
+    saved = client.post("/approval-policy", json={"action": "node-replacement", "enabled": False, "approver_roles": ["Platform Admin"]})
+    policies = client.get("/approval-policy")
+
+    assert saved.status_code == 200
+    assert saved.json()["enabled"] is False
+    assert any(policy["action"] == "node-replacement" for policy in policies.json()["policies"])
 
 
 def test_job_cancel_and_retry_endpoints() -> None:
