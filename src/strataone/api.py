@@ -485,6 +485,13 @@ def execute_discovery(run_id: str, context: AuthContext = Depends(require_permis
     return updated.model_dump(mode="json") if updated else run.model_dump(mode="json")
 
 
+@app.delete("/discovery/{run_id}")
+def delete_discovery(run_id: str, context: AuthContext = Depends(require_permission("run-inventory", store))) -> dict[str, bool]:
+    deleted = store.delete_discovery_run(run_id)
+    store.add_audit(context.username, "discovery.delete", f"discovery:{run_id}", {"deleted": deleted})
+    return {"deleted": deleted}
+
+
 @app.get("/isos")
 def list_isos(_: Any = read_sites) -> dict[str, Any]:
     return {"isos": [item.model_dump(mode="json") for item in store.list_isos()]}

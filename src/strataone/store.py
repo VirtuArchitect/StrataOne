@@ -916,6 +916,11 @@ class StrataStore:
             rows = conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC").fetchall()
         return [self._discovery_run_from_row(row) for row in rows]
 
+    def delete_discovery_run(self, run_id: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM discovery_runs WHERE id = ?", (run_id,))
+        return result.rowcount > 0
+
     def upsert_iso(self, name: str, uri: str, checksum: str | None = None, checksum_algorithm: str = "sha256", status: str = "registered") -> IsoRecord:
         now = _now()
         existing = self.get_iso(name)

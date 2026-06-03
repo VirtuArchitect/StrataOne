@@ -983,6 +983,7 @@ function renderDiscovery() {
       <div class="row-actions">
         <button class="mini secondary" data-show-discovery="${escapeHtml(run.id)}">Inspect</button>
         <button class="mini" data-execute-discovery="${escapeHtml(run.id)}">Execute</button>
+        <button class="mini danger" data-delete-discovery="${escapeHtml(run.id)}">Delete</button>
       </div>
     </div>
   `).join("") || `<div class="settings-empty">No discovery plans yet.</div>`;
@@ -1457,6 +1458,13 @@ async function handleDocumentActions(event) {
   if (executeDiscovery) {
     const result = await apiPost(`/discovery/${encodeURIComponent(executeDiscovery.dataset.executeDiscovery)}/execute`, {});
     writeResult("discovery executed", result);
+    await loadDiscovery();
+    return;
+  }
+  const deleteDiscovery = event.target.closest("[data-delete-discovery]");
+  if (deleteDiscovery) {
+    const result = await apiDelete(`/discovery/${encodeURIComponent(deleteDiscovery.dataset.deleteDiscovery)}`);
+    writeResult("discovery deleted", result);
     await loadDiscovery();
     return;
   }

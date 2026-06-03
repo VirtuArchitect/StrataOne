@@ -286,6 +286,19 @@ def test_discovery_execute_marks_candidates_ready_when_live_disabled() -> None:
     assert executed.json()["result"]["candidates"][0]["status"] == "scan-ready"
 
 
+def test_discovery_run_can_be_deleted() -> None:
+    client = TestClient(app)
+    planned = client.post(
+        "/discovery",
+        json={"name": "Delete scan", "cidr": "10.0.2.0/30", "provider": "generic-redfish"},
+    ).json()
+
+    deleted = client.delete(f"/discovery/{planned['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+
 def test_iso_registry_round_trips() -> None:
     client = TestClient(app)
 
