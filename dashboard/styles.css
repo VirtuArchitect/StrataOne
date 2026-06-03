@@ -438,11 +438,54 @@ textarea {
   padding: 7px 9px;
 }
 
+input[type="checkbox"] {
+  appearance: none;
+  align-items: center;
+  background: #0d1020;
+  border: 1px solid #5a4e86;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-grid;
+  flex: 0 0 auto;
+  height: 16px;
+  justify-content: center;
+  margin: 0;
+  min-height: 16px;
+  padding: 0;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  width: 16px;
+}
+
+input[type="checkbox"]::after {
+  border: solid #07111d;
+  border-width: 0 2px 2px 0;
+  content: "";
+  height: 8px;
+  opacity: 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+  width: 4px;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--teal);
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(68, 212, 164, 0.12);
+}
+
+input[type="checkbox"]:checked::after { opacity: 1; }
+input[type="checkbox"]:hover { border-color: var(--teal); }
+
 input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--accent);
   outline: 2px solid rgba(29, 95, 125, 0.12);
+}
+
+input[type="checkbox"]:focus {
+  border-color: var(--teal);
+  outline: 2px solid rgba(68, 212, 164, 0.18);
+  outline-offset: 2px;
 }
 
 .choice-grid {
