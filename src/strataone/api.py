@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 
@@ -13,6 +13,7 @@ from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
+from strataone.security import ALL_PERMISSIONS, auth_enabled, cors_origins, require_permission
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 
@@ -74,7 +75,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv("STRATAONE_CORS_ORIGINS", "http://localhost:8088,http://127.0.0.1:8088").split(",") if origin.strip()],
+    allow_origins=cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,6 +87,19 @@ def _spec_from_payload(payload: SitePayload) -> SiteSpec:
         return SiteSpec.model_validate(payload.site)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+read_sites = Depends(require_permission("read-sites", store))
+write_sites = Depends(require_permission("create-sites", store))
+delete_sites = Depends(require_permission("delete-sites", store))
+read_jobs = Depends(require_permission("read-jobs", store))
+read_inventory = Depends(require_permission("read-inventory", store))
+write_inventory = Depends(require_permission("write-inventory", store))
+read_providers = Depends(require_permission("read-providers", store))
+manage_providers = Depends(require_permission("manage-providers", store))
+read_settings = Depends(require_permission("read-settings", store))
+manage_access = Depends(require_permission("manage-access", store))
+worker_execute = Depends(require_permission("worker-execute", store))
 
 
 @app.get("/health")
@@ -105,7 +119,7 @@ def root() -> dict[str, Any]:
 
 
 @app.get("/sites/example")
-def example_site() -> dict[str, Any]:
+def example_site(_: Any = read_sites) -> dict[str, Any]:
     try:
         spec = load_site_spec(Path("examples/azure-local-branch.yaml"))
         return spec.model_dump(mode="json")
@@ -123,12 +137,12 @@ def seed_example_site() -> None:
 
 
 @app.get("/providers")
-def providers() -> dict[str, Any]:
+def providers(_: Any = read_providers) -> dict[str, Any]:
     return {"providers": [provider.model_dump(mode="json") for provider in list_providers()]}
 
 
 @app.post("/providers")
-def create_or_update_provider(payload: ProviderPayload) -> dict[str, Any]:
+def create_or_update_provider(payload: ProviderPayload, _: Any = manage_providers) -> dict[str, Any]:
     if payload.type not in {"hardware", "platform"}:
         raise HTTPException(status_code=422, detail="provider type must be hardware or platform")
     name = payload.name.strip().lower().replace(" ", "-")
@@ -149,7 +163,7 @@ def create_or_update_provider(payload: ProviderPayload) -> dict[str, Any]:
 
 
 @app.delete("/providers/{provider_name}")
-def delete_provider(provider_name: str) -> dict[str, bool]:
+def delete_provider(provider_name: str, _: Any = manage_providers) -> dict[str, bool]:
     built_in = [provider for provider in list_providers() if provider.name == provider_name and not provider.editable]
     if built_in:
         raise HTTPException(status_code=409, detail="built-in providers cannot be deleted")
@@ -157,7 +171,7 @@ def delete_provider(provider_name: str) -> dict[str, bool]:
 
 
 @app.get("/settings")
-def settings() -> dict[str, Any]:
+def settings(_: Any = read_settings) -> dict[str, Any]:
     provider_list = list_providers()
     return {
         "general": {
@@ -167,8 +181,9 @@ def settings() -> dict[str, Any]:
             "dashboard_port": os.getenv("STRATAONE_DASHBOARD_PORT", "8088"),
         },
         "access": {
-            "mode": "local-dev",
-            "rbac_enforced": False,
+            "mode": "rbac" if auth_enabled() else "local-dev",
+            "rbac_enforced": auth_enabled(),
+            "permissions": sorted(ALL_PERMISSIONS),
             "oidc_enabled": bool(os.getenv("STRATAONE_OIDC_ISSUER")),
             "users": [user.model_dump(mode="json") for user in store.list_users()],
             "roles": [role.model_dump(mode="json") for role in store.list_roles()],
@@ -177,13 +192,16 @@ def settings() -> dict[str, Any]:
             "bmc_username_configured": bool(os.getenv("STRATAONE_BMC_USERNAME")),
             "bmc_password_configured": bool(os.getenv("STRATAONE_BMC_PASSWORD")),
             "dashboard_transient_credentials": True,
-            "vault_provider": os.getenv("STRATAONE_VAULT_PROVIDER", "none"),
+            "vault_provider": os.getenv("STRATAONE_VAULT_PROVIDER", "env"),
+            "vault_file_configured": bool(os.getenv("STRATAONE_VAULT_FILE")),
+            "hashicorp_vault_configured": bool(os.getenv("STRATAONE_VAULT_ADDR")),
         },
         "database": {
             "mode": "sqlite",
             "path": str(store.path),
             "site_count": len(store.list_sites()),
             "job_count": len(store.list_jobs()),
+            "execution_mode": os.getenv("STRATAONE_EXECUTION_MODE", "inline"),
         },
         "providers": {
             "plugin_dir": os.getenv("STRATAONE_PLUGIN_DIR", "plugins"),
@@ -210,12 +228,12 @@ def settings() -> dict[str, Any]:
 
 
 @app.get("/access/roles")
-def list_roles() -> dict[str, Any]:
+def list_roles(_: Any = manage_access) -> dict[str, Any]:
     return {"roles": [role.model_dump(mode="json") for role in store.list_roles()]}
 
 
 @app.post("/access/roles")
-def create_or_update_role(payload: RolePayload) -> dict[str, Any]:
+def create_or_update_role(payload: RolePayload, _: Any = manage_access) -> dict[str, Any]:
     if not payload.name.strip():
         raise HTTPException(status_code=422, detail="role name is required")
     role = RoleRecord(
@@ -230,7 +248,7 @@ def create_or_update_role(payload: RolePayload) -> dict[str, Any]:
 
 
 @app.delete("/access/roles/{role_name}")
-def delete_role(role_name: str) -> dict[str, bool]:
+def delete_role(role_name: str, _: Any = manage_access) -> dict[str, bool]:
     deleted = store.delete_role(role_name)
     if not deleted:
         role = store.get_role(role_name)
@@ -240,12 +258,12 @@ def delete_role(role_name: str) -> dict[str, bool]:
 
 
 @app.get("/access/users")
-def list_users() -> dict[str, Any]:
+def list_users(_: Any = manage_access) -> dict[str, Any]:
     return {"users": [user.model_dump(mode="json") for user in store.list_users()]}
 
 
 @app.post("/access/users")
-def create_or_update_user(payload: UserPayload) -> dict[str, Any]:
+def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[str, Any]:
     if not payload.username.strip():
         raise HTTPException(status_code=422, detail="username is required")
     known_roles = {role.name for role in store.list_roles()}
@@ -265,23 +283,23 @@ def create_or_update_user(payload: UserPayload) -> dict[str, Any]:
 
 
 @app.delete("/access/users/{username}")
-def delete_user(username: str) -> dict[str, bool]:
+def delete_user(username: str, _: Any = manage_access) -> dict[str, bool]:
     return {"deleted": store.delete_user(username)}
 
 
 @app.get("/sites")
-def list_site_records() -> dict[str, Any]:
+def list_site_records(_: Any = read_sites) -> dict[str, Any]:
     return {"sites": [site.model_dump(mode="json") for site in store.list_sites()]}
 
 
 @app.post("/sites")
-def create_or_update_site(payload: SitePayload) -> dict[str, Any]:
+def create_or_update_site(payload: SitePayload, _: Any = write_sites) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
     return store.upsert_site(spec).model_dump(mode="json")
 
 
 @app.get("/sites/{site_name}")
-def get_site_record(site_name: str) -> dict[str, Any]:
+def get_site_record(site_name: str, _: Any = read_sites) -> dict[str, Any]:
     site = store.get_site(site_name)
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
@@ -289,27 +307,28 @@ def get_site_record(site_name: str) -> dict[str, Any]:
 
 
 @app.delete("/sites/{site_name}")
-def delete_site_record(site_name: str) -> dict[str, bool]:
+def delete_site_record(site_name: str, _: Any = delete_sites) -> dict[str, bool]:
     return {"deleted": store.delete_site(site_name)}
 
 
 @app.post("/sites/{site_name}/jobs/{action}")
-def run_site_job(site_name: str, action: str, payload: JobPayload | None = None) -> dict[str, str]:
+def run_site_job(site_name: str, action: str, payload: JobPayload | None = None, authorization: str | None = Header(default=None)) -> dict[str, str]:
     if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso"}:
         raise HTTPException(status_code=400, detail="unsupported action")
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")
-    params = payload.model_dump(exclude_none=True) if payload else {}
+    require_permission(_permission_for_action(action), store)(authorization)
+    params = payload.model_dump(mode="json", exclude_none=True) if payload else {}
     return {"job_id": jobs.submit(site_name, action, params)}
 
 
 @app.get("/jobs")
-def list_job_records(site_name: str | None = None) -> dict[str, Any]:
+def list_job_records(site_name: str | None = None, _: Any = read_jobs) -> dict[str, Any]:
     return {"jobs": [job.model_dump(mode="json") for job in store.list_jobs(site_name)]}
 
 
 @app.get("/jobs/{job_id}")
-def get_job_record(job_id: str) -> dict[str, Any]:
+def get_job_record(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -317,7 +336,7 @@ def get_job_record(job_id: str) -> dict[str, Any]:
 
 
 @app.post("/sites/{site_name}/artifacts")
-def generate_artifacts(site_name: str) -> dict[str, Any]:
+def generate_artifacts(site_name: str, _: Any = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
     site = store.get_site(site_name)
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
@@ -325,7 +344,7 @@ def generate_artifacts(site_name: str) -> dict[str, Any]:
 
 
 @app.get("/sites/{site_name}/inventory")
-def get_site_inventory(site_name: str) -> dict[str, Any]:
+def get_site_inventory(site_name: str, _: Any = read_inventory) -> dict[str, Any]:
     inventory = store.get_inventory(site_name)
     if inventory is None:
         raise HTTPException(status_code=404, detail="inventory not found")
@@ -333,7 +352,7 @@ def get_site_inventory(site_name: str) -> dict[str, Any]:
 
 
 @app.post("/sites/{site_name}/inventory")
-def save_site_inventory(site_name: str, payload: InventoryPayload) -> dict[str, Any]:
+def save_site_inventory(site_name: str, payload: InventoryPayload, _: Any = write_inventory) -> dict[str, Any]:
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")
     report = InventoryReport.model_validate(payload.inventory)
@@ -343,7 +362,7 @@ def save_site_inventory(site_name: str, payload: InventoryPayload) -> dict[str, 
 
 
 @app.post("/sites/validate")
-def validate_site(payload: SitePayload) -> dict[str, Any]:
+def validate_site(payload: SitePayload, _: Any = Depends(require_permission("run-validate", store))) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
     return {
         "valid": True,
@@ -355,12 +374,29 @@ def validate_site(payload: SitePayload) -> dict[str, Any]:
 
 
 @app.post("/sites/plan")
-def plan_site(payload: SitePayload) -> dict[str, Any]:
+def plan_site(payload: SitePayload, _: Any = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
     return Orchestrator().plan(spec).model_dump(mode="json")
 
 
 @app.post("/sites/preflight")
-def preflight_site(payload: SitePayload) -> dict[str, Any]:
+def preflight_site(payload: SitePayload, _: Any = Depends(require_permission("run-preflight", store))) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
     return PreflightRunner().run(spec).model_dump(mode="json")
+
+
+@app.post("/jobs/worker/run-once")
+def run_queued_job_once(_: Any = worker_execute) -> dict[str, Any]:
+    job_id = jobs.run_queued_once()
+    return {"job_id": job_id, "ran": job_id is not None}
+
+
+def _permission_for_action(action: str) -> str:
+    return {
+        "validate": "run-validate",
+        "plan": "run-plan",
+        "inventory": "run-inventory",
+        "preflight": "run-preflight",
+        "artifacts": "generate-artifacts",
+        "mount-iso": "mount-iso",
+    }[action]

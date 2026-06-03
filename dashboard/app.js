@@ -11,6 +11,8 @@ const state = {
   selectedSite: null,
   selectedHardware: "generic-redfish",
   selectedPlatform: "azure-local",
+  authToken: localStorage.getItem("strataone.authToken") || "",
+  authUser: localStorage.getItem("strataone.authUser") || "operator",
   activeView: "overview",
   activeStep: "intent",
   deploymentNodes: [
@@ -23,6 +25,7 @@ const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
 
 const els = {
   apiStatus: document.querySelector("#apiStatus"),
+  userChip: document.querySelector(".user-chip"),
   viewTitle: document.querySelector("#viewTitle"),
   viewSubtitle: document.querySelector("#viewSubtitle"),
   siteYaml: document.querySelector("#siteYaml"),
@@ -113,6 +116,7 @@ const exampleYaml = toYaml(exampleSpec());
 els.siteYaml.value = exampleYaml;
 
 wireEvents();
+renderAuthState();
 renderNodeEditor();
 renderLifecycle("firmware");
 renderDeploymentSummary(exampleSpec());
@@ -138,7 +142,7 @@ function wireEvents() {
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
-  document.querySelector("#logoutButton").addEventListener("click", logout);
+  document.querySelector("#logoutButton").addEventListener("click", toggleAuthSession);
   document.querySelector("#addNode").addEventListener("click", addDeploymentNode);
   document.querySelector("#newProvider").addEventListener("click", () => showProviderForm());
   document.querySelector("#cancelProvider").addEventListener("click", hideProviderForm);
@@ -999,13 +1003,13 @@ function jobPayload(action) {
 }
 
 async function apiGet(path) {
-  const response = await fetchWithTimeout(`${apiBase}${path}`);
+  const response = await apiFetch(path);
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
 
 async function apiPost(path, body) {
-  const response = await fetchWithTimeout(`${apiBase}${path}`, {
+  const response = await apiFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -1015,9 +1019,24 @@ async function apiPost(path, body) {
 }
 
 async function apiDelete(path) {
-  const response = await fetchWithTimeout(`${apiBase}${path}`, { method: "DELETE" });
+  const response = await apiFetch(path, { method: "DELETE" });
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
+}
+
+async function apiFetch(path, options = {}, retry = true) {
+  const response = await fetchWithTimeout(`${apiBase}${path}`, withAuth(options));
+  if (response.status === 401 && retry) {
+    const token = window.prompt("Enter StrataOne API bearer token");
+    if (!token) return response;
+    state.authToken = token.trim();
+    state.authUser = "api user";
+    localStorage.setItem("strataone.authToken", state.authToken);
+    localStorage.setItem("strataone.authUser", state.authUser);
+    renderAuthState();
+    return apiFetch(path, options, false);
+  }
+  return response;
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -1031,6 +1050,12 @@ async function fetchWithTimeout(url, options = {}) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function withAuth(options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.authToken) headers.set("Authorization", `Bearer ${state.authToken}`);
+  return { ...options, headers };
 }
 
 function parseTinyYaml(text) {
@@ -1137,11 +1162,34 @@ function writeSiteAction(message, status = "info") {
   els.siteActionStatus.className = `action-status ${status}`;
 }
 
+function toggleAuthSession() {
+  if (!state.authToken) {
+    const token = window.prompt("Enter StrataOne API bearer token");
+    if (!token) return;
+    state.authToken = token.trim();
+    state.authUser = "api user";
+    localStorage.setItem("strataone.authToken", state.authToken);
+    localStorage.setItem("strataone.authUser", state.authUser);
+    renderAuthState();
+    refreshAll();
+    return;
+  }
+  logout();
+}
+
 function logout() {
-  writeResult("logout", { status: "local session cleared", authentication: "not yet enforced" });
-  writeSiteAction("Local dashboard session cleared");
-  document.querySelector(".user-chip").textContent = "signed out";
-  document.querySelector("#logoutButton").disabled = true;
+  state.authToken = "";
+  state.authUser = "signed out";
+  localStorage.removeItem("strataone.authToken");
+  localStorage.setItem("strataone.authUser", state.authUser);
+  writeResult("logout", { status: "dashboard bearer token cleared" });
+  writeSiteAction("Dashboard session cleared");
+  renderAuthState();
+}
+
+function renderAuthState() {
+  els.userChip.innerHTML = `${escapeHtml(state.authToken ? state.authUser : "anonymous")} <span>${state.authToken ? "token" : "no token"}</span>`;
+  document.querySelector("#logoutButton").textContent = state.authToken ? "Logout" : "Login";
 }
 
 function value(selector) {

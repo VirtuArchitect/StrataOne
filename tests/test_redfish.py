@@ -3,8 +3,10 @@ from strataone.state import NodeSpec
 
 
 class FakeResponse:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
         self.payload = payload
+        self.status_code = status_code
+        self.content = b"{}"
 
     def raise_for_status(self) -> None:
         return None
@@ -16,10 +18,22 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, payloads: dict[str, dict]) -> None:
         self.payloads = payloads
+        self.posts = []
+        self.patches = []
 
     def get(self, url: str, **kwargs) -> FakeResponse:
         path = "/" + url.split("/", 3)[3]
         return FakeResponse(self.payloads[path])
+
+    def post(self, url: str, **kwargs) -> FakeResponse:
+        path = "/" + url.split("/", 3)[3]
+        self.posts.append((path, kwargs.get("json")))
+        return FakeResponse({"ok": True})
+
+    def patch(self, url: str, **kwargs) -> FakeResponse:
+        path = "/" + url.split("/", 3)[3]
+        self.patches.append((path, kwargs.get("json")))
+        return FakeResponse({"ok": True})
 
 
 def test_collect_node_inventory_from_standard_redfish_endpoints() -> None:
@@ -104,3 +118,45 @@ def test_collect_node_inventory_from_standard_redfish_endpoints() -> None:
     assert "boot-override" in inventory.capabilities
     assert "firmware-inventory" in inventory.capabilities
     assert "virtual-media" in inventory.capabilities
+
+
+def test_mount_virtual_media_posts_insert_media_and_boot_override() -> None:
+    session = FakeSession(
+        {
+            "/redfish/v1/Systems": {"Members": [{"@odata.id": "/redfish/v1/Systems/1"}]},
+            "/redfish/v1/Systems/1": {"@odata.id": "/redfish/v1/Systems/1", "Boot": {}},
+            "/redfish/v1/Managers": {"Members": [{"@odata.id": "/redfish/v1/Managers/1"}]},
+            "/redfish/v1/Managers/1": {
+                "VirtualMedia": {"@odata.id": "/redfish/v1/Managers/1/VirtualMedia"},
+            },
+            "/redfish/v1/Managers/1/VirtualMedia": {
+                "Members": [{"@odata.id": "/redfish/v1/Managers/1/VirtualMedia/CD"}]
+            },
+            "/redfish/v1/Managers/1/VirtualMedia/CD": {
+                "@odata.id": "/redfish/v1/Managers/1/VirtualMedia/CD",
+                "MediaTypes": ["CD", "DVD"],
+                "Actions": {
+                    "#VirtualMedia.InsertMedia": {
+                        "target": "/redfish/v1/Managers/1/VirtualMedia/CD/Actions/VirtualMedia.InsertMedia"
+                    }
+                },
+            },
+        }
+    )
+    client = RedfishClient(RedfishCredentials(username="admin", password="secret"), session=session)
+
+    result = client.mount_virtual_media(NodeSpec(serial="ABC123", bmc_ip="10.10.1.11"), "https://repo.example.com/os.iso")
+
+    assert result["virtual_media"] == "/redfish/v1/Managers/1/VirtualMedia/CD"
+    assert session.posts == [
+        (
+            "/redfish/v1/Managers/1/VirtualMedia/CD/Actions/VirtualMedia.InsertMedia",
+            {"Image": "https://repo.example.com/os.iso", "Inserted": True, "WriteProtected": True},
+        )
+    ]
+    assert session.patches == [
+        (
+            "/redfish/v1/Systems/1",
+            {"Boot": {"BootSourceOverrideTarget": "Cd", "BootSourceOverrideEnabled": "Once"}},
+        )
+    ]

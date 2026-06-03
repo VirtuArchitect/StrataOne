@@ -27,6 +27,7 @@ class JobRecord(BaseModel):
     site_name: str
     action: str
     status: str
+    params: dict[str, Any] = {}
     result: dict[str, Any] | None = None
     error: str | None = None
     created_at: str
@@ -94,6 +95,7 @@ class StrataStore:
                     site_name TEXT NOT NULL,
                     action TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    params_json TEXT,
                     result_json TEXT,
                     error TEXT,
                     created_at TEXT NOT NULL,
@@ -102,6 +104,7 @@ class StrataStore:
                 )
                 """
             )
+            self._ensure_column(conn, "jobs", "params_json", "TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS inventory (
@@ -184,22 +187,30 @@ class StrataStore:
             result = conn.execute("DELETE FROM sites WHERE name = ?", (name,))
         return result.rowcount > 0
 
-    def create_job(self, site_name: str, action: str) -> JobRecord:
+    def create_job(self, site_name: str, action: str, params: dict[str, Any] | None = None) -> JobRecord:
         now = _now()
         job_id = str(uuid.uuid4())
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs (id, site_name, action, status, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO jobs (id, site_name, action, status, params_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, site_name, action, "queued", now),
+                (job_id, site_name, action, "queued", json.dumps(params or {}), now),
             )
         return self.get_job(job_id)  # type: ignore[return-value]
 
     def start_job(self, job_id: str) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?", ("running", _now(), job_id))
+
+    def claim_next_job(self) -> JobRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1", ("queued",)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?", ("running", _now(), row["id"]))
+        return self.get_job(row["id"])
 
     def finish_job(self, job_id: str, result: dict[str, Any]) -> None:
         with self._connect() as conn:
@@ -262,7 +273,7 @@ class StrataStore:
             RoleRecord(
                 name="Viewer",
                 description="Read-only access to sites, jobs, providers, and reports.",
-                permissions=["read-sites", "read-jobs", "read-providers"],
+                permissions=["read-sites", "read-jobs", "read-providers", "read-settings", "read-inventory"],
                 built_in=True,
                 created_at=_now(),
                 updated_at=_now(),
@@ -270,7 +281,7 @@ class StrataStore:
             RoleRecord(
                 name="Operator",
                 description="Runs inventory, preflight, artifact, and validation workflows.",
-                permissions=["run-inventory", "run-preflight", "generate-artifacts", "run-validate"],
+                permissions=["run-inventory", "run-preflight", "generate-artifacts", "run-validate", "mount-iso"],
                 built_in=True,
                 created_at=_now(),
                 updated_at=_now(),
@@ -278,7 +289,7 @@ class StrataStore:
             RoleRecord(
                 name="Deployment Admin",
                 description="Creates and edits deployment desired state.",
-                permissions=["create-sites", "update-sites", "delete-sites", "run-plan"],
+                permissions=["create-sites", "update-sites", "delete-sites", "run-plan", "write-inventory"],
                 built_in=True,
                 created_at=_now(),
                 updated_at=_now(),
@@ -286,7 +297,17 @@ class StrataStore:
             RoleRecord(
                 name="Platform Admin",
                 description="Manages providers, access posture, settings, and platform policy.",
-                permissions=["manage-providers", "manage-settings", "manage-access"],
+                permissions=[
+                    "read-sites",
+                    "read-jobs",
+                    "read-providers",
+                    "read-settings",
+                    "read-inventory",
+                    "manage-providers",
+                    "manage-settings",
+                    "manage-access",
+                    "worker-execute",
+                ],
                 built_in=True,
                 created_at=_now(),
                 updated_at=_now(),
@@ -301,7 +322,8 @@ class StrataStore:
             ),
         ]
         for role in defaults:
-            if self.get_role(role.name) is None:
+            existing = self.get_role(role.name)
+            if existing is None or existing.built_in:
                 self.upsert_role(role)
 
         if self.get_user("admin") is None:
@@ -351,8 +373,8 @@ class StrataStore:
         role = self.get_role(name)
         if role is None or role.built_in:
             return False
+        users = self.list_users()
         with self._connect() as conn:
-            users = self.list_users()
             for user in users:
                 if name in user.roles:
                     remaining = [item for item in user.roles if item != name]
@@ -412,12 +434,18 @@ class StrataStore:
             site_name=row["site_name"],
             action=row["action"],
             status=row["status"],
+            params=json.loads(row["params_json"]) if "params_json" in row.keys() and row["params_json"] else {},
             result=json.loads(row["result_json"]) if row["result_json"] else None,
             error=row["error"],
             created_at=row["created_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
         )
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _inventory_from_row(self, row: sqlite3.Row) -> InventoryRecord:
         return InventoryRecord(

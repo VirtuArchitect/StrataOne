@@ -59,6 +59,46 @@ class RedfishClient:
                 error=str(exc),
             )
 
+    def mount_virtual_media(self, node: NodeSpec, iso_url: str, *, boot_once: bool = True) -> dict[str, Any]:
+        system = self._first_member(node.bmc_ip, "/redfish/v1/Systems")
+        manager = self._first_manager_with_virtual_media(node.bmc_ip)
+        virtual_media = self._select_virtual_media(node.bmc_ip, manager)
+        insert_action = (
+            virtual_media.get("Actions", {})
+            .get("#VirtualMedia.InsertMedia", {})
+            .get("target")
+            or f"{virtual_media.get('@odata.id')}/Actions/VirtualMedia.InsertMedia"
+        )
+        insert_result = self._post(
+            node.bmc_ip,
+            insert_action,
+            {"Image": iso_url, "Inserted": True, "WriteProtected": True},
+        )
+        boot_result: dict[str, Any] | None = None
+        if boot_once:
+            system_path = system.get("@odata.id", "/redfish/v1/Systems/1")
+            boot_result = self._patch(
+                node.bmc_ip,
+                system_path,
+                {"Boot": {"BootSourceOverrideTarget": "Cd", "BootSourceOverrideEnabled": "Once"}},
+            )
+        return {
+            "virtual_media": virtual_media.get("@odata.id"),
+            "insert_media": insert_result,
+            "boot_override": boot_result,
+        }
+
+    def eject_virtual_media(self, node: NodeSpec) -> dict[str, Any]:
+        manager = self._first_manager_with_virtual_media(node.bmc_ip)
+        virtual_media = self._select_virtual_media(node.bmc_ip, manager)
+        eject_action = (
+            virtual_media.get("Actions", {})
+            .get("#VirtualMedia.EjectMedia", {})
+            .get("target")
+            or f"{virtual_media.get('@odata.id')}/Actions/VirtualMedia.EjectMedia"
+        )
+        return self._post(node.bmc_ip, eject_action, {})
+
     def _get(self, bmc_ip: str, path: str) -> dict[str, Any]:
         response = self.session.get(
             f"https://{bmc_ip}{path}",
@@ -72,6 +112,36 @@ class RedfishClient:
         if not isinstance(payload, dict):
             raise ValueError(f"Redfish endpoint {path} did not return a JSON object")
         return payload
+
+    def _post(self, bmc_ip: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        response = self.session.post(
+            f"https://{bmc_ip}{path}",
+            auth=HTTPBasicAuth(self.credentials.username, self.credentials.password),
+            timeout=self.timeout,
+            verify=self.verify_tls,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return self._json_or_status(response)
+
+    def _patch(self, bmc_ip: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        response = self.session.patch(
+            f"https://{bmc_ip}{path}",
+            auth=HTTPBasicAuth(self.credentials.username, self.credentials.password),
+            timeout=self.timeout,
+            verify=self.verify_tls,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return self._json_or_status(response)
+
+    def _json_or_status(self, response) -> dict[str, Any]:
+        if getattr(response, "content", b""):
+            payload = response.json()
+            return payload if isinstance(payload, dict) else {"payload": payload}
+        return {"status_code": getattr(response, "status_code", 200)}
 
     def _optional_get(self, bmc_ip: str, path: str) -> dict[str, Any] | None:
         try:
@@ -96,6 +166,25 @@ class RedfishClient:
         if not members:
             raise ValueError(f"Redfish collection {path} returned no members")
         return members[0]
+
+    def _first_manager_with_virtual_media(self, bmc_ip: str) -> dict[str, Any]:
+        for manager in self._members(bmc_ip, "/redfish/v1/Managers"):
+            if manager.get("VirtualMedia", {}).get("@odata.id"):
+                return manager
+        raise ValueError("Redfish manager does not advertise VirtualMedia")
+
+    def _select_virtual_media(self, bmc_ip: str, manager: dict[str, Any]) -> dict[str, Any]:
+        virtual_media_path = manager.get("VirtualMedia", {}).get("@odata.id")
+        if not virtual_media_path:
+            raise ValueError("Redfish manager does not advertise VirtualMedia")
+        media_members = self._members(bmc_ip, virtual_media_path)
+        if not media_members:
+            raise ValueError("Redfish VirtualMedia collection returned no members")
+        for media in media_members:
+            media_types = [str(item).lower() for item in media.get("MediaTypes", [])]
+            if any(item in {"cd", "dvd"} for item in media_types):
+                return media
+        return media_members[0]
 
     def _inventory_from_links(self, bmc_ip: str, resource: dict[str, Any], key: str) -> list[InventoryItem]:
         link = resource.get(key, {})

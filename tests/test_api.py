@@ -187,3 +187,38 @@ def test_inventory_can_be_saved_and_returned() -> None:
     assert save_response.status_code == 200
     assert get_response.status_code == 200
     assert get_response.json()["reachable_nodes"] == 1
+
+
+def test_auth_enforcement_rejects_missing_token(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "test-bootstrap")
+    client = TestClient(app)
+
+    response = client.get("/sites")
+
+    assert response.status_code == 401
+
+
+def test_auth_enforcement_accepts_bootstrap_token(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "test-bootstrap")
+    client = TestClient(app)
+
+    response = client.get("/sites", headers={"Authorization": "Bearer test-bootstrap"})
+
+    assert response.status_code == 200
+
+
+def test_rbac_rejects_valid_token_without_permission(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "test-bootstrap")
+    monkeypatch.setenv("STRATAONE_API_TOKENS", "viewer-token=viewer:Viewer")
+    client = TestClient(app)
+
+    response = client.post(
+        "/providers",
+        headers={"Authorization": "Bearer viewer-token"},
+        json={"name": "Blocked Provider", "type": "hardware", "description": "Should not save"},
+    )
+
+    assert response.status_code == 403
