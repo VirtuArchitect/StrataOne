@@ -9,7 +9,7 @@ from strataone.preflight import PreflightRunner
 from strataone.providers.hardware import get_hardware_provider
 from strataone.queue import get_job_queue
 from strataone.redfish import RedfishClient, RedfishCredentials
-from strataone.secrets import resolve_bmc_credentials
+from strataone.secrets import resolve_bmc_credentials, resolve_bmc_credentials_from_ref
 from strataone.store import StrataStore, spec_from_record
 from strataone.validation import live_operation_allowed
 
@@ -85,6 +85,8 @@ class JobRunner:
             return ArtifactGenerator().generate(spec).model_dump(mode="json")
         if action == "mount-iso":
             return self._mount_iso(spec, params)
+        if action == "eject-iso":
+            return self._eject_iso(spec, params)
         if action == "deploy-azure-local":
             return self._deploy_azure_local(spec, params)
         if action == "drift-detect":
@@ -94,7 +96,7 @@ class JobRunner:
         raise ValueError(f"unsupported job action {action}")
 
     def _inventory(self, spec, params: dict[str, Any]):
-        secret = resolve_bmc_credentials(spec.site.name, params)
+        secret = self._credentials(spec.site.name, params)
         if secret is None:
             raise ValueError("BMC credentials are required for inventory jobs")
         provider = get_hardware_provider(spec.hardware.vendor)
@@ -109,10 +111,12 @@ class JobRunner:
         )
 
     def _mount_iso(self, spec, params: dict[str, Any]) -> dict[str, Any]:
-        iso_url = params.get("iso_url")
+        iso_ref = params.get("iso_ref")
+        iso = self.store.get_iso(str(iso_ref)) if iso_ref else None
+        iso_url = params.get("iso_url") or (iso.uri if iso else None)
         if not iso_url:
             raise ValueError("iso_url is required to mount virtual media")
-        secret = resolve_bmc_credentials(spec.site.name, params)
+        secret = self._credentials(spec.site.name, params)
         if secret is None:
             raise ValueError("BMC credentials are required for ISO mount jobs")
         live = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
@@ -163,6 +167,47 @@ class JobRunner:
             "execution_mode": "simulated-redfish-contract",
             "note": "Provider-specific InsertMedia/BootSourceOverride execution should be enabled behind approval gates.",
         }
+
+    def _eject_iso(self, spec, params: dict[str, Any]) -> dict[str, Any]:
+        secret = self._credentials(spec.site.name, params)
+        if secret is None:
+            raise ValueError("BMC credentials are required for ISO eject jobs")
+        live = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
+        insecure = params.get("insecure")
+        if insecure is None:
+            insecure = os.getenv("STRATAONE_BMC_INSECURE", "").lower() in {"1", "true", "yes"}
+        if live:
+            if not live_operation_allowed(spec.hardware.vendor, "redfish-virtual-media"):
+                raise ValueError(f"live Redfish virtual media is not lab-validated for provider {spec.hardware.vendor}")
+            client = RedfishClient(
+                RedfishCredentials(username=secret.username, password=secret.password),
+                timeout=float(params.get("timeout") or os.getenv("STRATAONE_BMC_TIMEOUT", "10")),
+                verify_tls=not bool(insecure),
+            )
+            nodes = [
+                {
+                    "serial": node.serial,
+                    "bmc_ip": node.bmc_ip,
+                    "status": "succeeded",
+                    "provider": spec.hardware.vendor,
+                    "result": client.eject_virtual_media(node),
+                }
+                for node in spec.hardware.nodes
+            ]
+            mode = "live-redfish"
+        else:
+            nodes = [
+                {
+                    "serial": node.serial,
+                    "bmc_ip": node.bmc_ip,
+                    "status": "planned",
+                    "provider": spec.hardware.vendor,
+                    "operation": "eject virtual media and clear boot override",
+                }
+                for node in spec.hardware.nodes
+            ]
+            mode = "simulated-redfish-contract"
+        return {"site_name": spec.site.name, "action": "eject-iso", "nodes": nodes, "execution_mode": mode}
 
     def _deploy_azure_local(self, spec, params: dict[str, Any]) -> dict[str, Any]:
         if spec.platform.type.value != "azure-local":
@@ -229,3 +274,11 @@ class JobRunner:
 
     def _stage(self, name: str, description: str, status: str) -> dict[str, str]:
         return {"name": name, "description": description, "status": status}
+
+    def _credentials(self, site_name: str, params: dict[str, Any]):
+        if params.get("credential_ref"):
+            secret = self.store.get_secret_ref(str(params["credential_ref"]))
+            resolved = resolve_bmc_credentials_from_ref(secret)
+            if resolved is not None:
+                return resolved
+        return resolve_bmc_credentials(site_name, params)

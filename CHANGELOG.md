@@ -13,6 +13,7 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 - Sidebar navigation icons for primary dashboard sections.
 - Secret reference registry and BMC discovery planner.
 - Provider detail configuration templates for faster provider onboarding.
+- Credential references in jobs, executable discovery plans, ISO registry, ISO eject, and job cancel/retry controls.
 
 ### Fixed
 

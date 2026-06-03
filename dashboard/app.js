@@ -8,6 +8,7 @@ const state = {
   providers: [],
   approvals: [],
   artifacts: [],
+  isos: [],
   audit: [],
   sessions: [],
   discovery: [],
@@ -69,6 +70,7 @@ const els = {
   artifactOutput: document.querySelector("#artifactOutput"),
   artifactDetails: document.querySelector("#artifactDetails"),
   artifactList: document.querySelector("#artifactList"),
+  isoList: document.querySelector("#isoList"),
   deploymentDetailTitle: document.querySelector("#deploymentDetailTitle"),
   deploymentDetailSubtitle: document.querySelector("#deploymentDetailSubtitle"),
   deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
@@ -93,7 +95,9 @@ const els = {
   bmcPassword: document.querySelector("#bmcPassword"),
   bmcInsecure: document.querySelector("#bmcInsecure"),
   bmcTimeout: document.querySelector("#bmcTimeout"),
+  bmcCredentialRef: document.querySelector("#bmcCredentialRef"),
   isoUrl: document.querySelector("#isoUrl"),
+  isoRef: document.querySelector("#isoRef"),
   isoBootOnce: document.querySelector("#isoBootOnce"),
   discoveryProvider: document.querySelector("#discoveryProvider"),
   discoveryCredential: document.querySelector("#discoveryCredential"),
@@ -302,7 +306,7 @@ function selectChoice(type, value) {
 async function refreshAll() {
   await checkApi();
   try {
-    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings(), loadDiscovery()]);
+    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings(), loadDiscovery(), loadIsos()]);
   } catch (error) {
     if (isAuthError(error)) {
       renderAuthRequired();
@@ -400,6 +404,17 @@ async function loadDiscovery() {
   } catch {
     state.discovery = [];
     renderDiscovery();
+  }
+}
+
+async function loadIsos() {
+  try {
+    const data = await apiGet("/isos");
+    state.isos = data.isos || [];
+    renderIsos();
+  } catch {
+    state.isos = [];
+    renderIsos();
   }
 }
 
@@ -599,6 +614,7 @@ function jobItem(job) {
         <span>${escapeHtml(job.site_name)} - ${formatDate(job.created_at)}</span>
       </button>
       <button class="mini secondary" data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
+      ${["queued", "running"].includes(job.status) ? `<button class="mini danger" data-cancel-job="${escapeHtml(job.id)}">Cancel</button>` : ""}
     </div>
   `;
 }
@@ -638,6 +654,7 @@ function renderJobDetail(job, events) {
     </div>
     <div class="button-row detail-actions">
       <button data-rerun-job="${escapeHtml(job.id)}">Rerun</button>
+      ${["queued", "running"].includes(job.status) ? `<button class="danger" data-cancel-job="${escapeHtml(job.id)}">Cancel</button>` : ""}
       <button class="secondary" data-copy-job-result="${escapeHtml(job.id)}">Inspect Result</button>
     </div>
     <div class="timeline">
@@ -944,6 +961,13 @@ function renderDiscoveryOptions() {
       ...refs.map((secret) => `<option value="${escapeHtml(secret.name)}">${escapeHtml(secret.name)} (${escapeHtml(secret.provider)})</option>`),
     ].join("");
   }
+  if (els.bmcCredentialRef) {
+    const refs = state.settings?.secrets?.refs || [];
+    els.bmcCredentialRef.innerHTML = [
+      `<option value="">Use transient fields or default vault</option>`,
+      ...refs.filter((secret) => secret.type === "bmc").map((secret) => `<option value="${escapeHtml(secret.name)}">${escapeHtml(secret.name)}</option>`),
+    ].join("");
+  }
 }
 
 function renderDiscovery() {
@@ -956,9 +980,32 @@ function renderDiscovery() {
         <span>${escapeHtml(run.cidr)} - ${escapeHtml(run.provider)} - ${formatDate(run.created_at)}</span>
         <span>${escapeHtml(run.result?.candidate_count || 0)} candidate BMC addresses planned</span>
       </div>
-      <button class="mini secondary" data-show-discovery="${escapeHtml(run.id)}">Inspect</button>
+      <div class="row-actions">
+        <button class="mini secondary" data-show-discovery="${escapeHtml(run.id)}">Inspect</button>
+        <button class="mini" data-execute-discovery="${escapeHtml(run.id)}">Execute</button>
+      </div>
     </div>
   `).join("") || `<div class="settings-empty">No discovery plans yet.</div>`;
+}
+
+function renderIsos() {
+  if (els.isoRef) {
+    els.isoRef.innerHTML = [
+      `<option value="">Use ISO URL below</option>`,
+      ...state.isos.map((iso) => `<option value="${escapeHtml(iso.name)}">${escapeHtml(iso.name)}</option>`),
+    ].join("");
+  }
+  if (!els.isoList) return;
+  els.isoList.innerHTML = state.isos.map((iso) => `
+    <div class="settings-row">
+      <div>
+        <strong>${escapeHtml(iso.name)} <span class="badge">${escapeHtml(iso.status)}</span></strong>
+        <span>${escapeHtml(iso.uri)}</span>
+        <span>${iso.checksum ? `${escapeHtml(iso.checksum_algorithm)} ${escapeHtml(iso.checksum)}` : "No checksum registered"}</span>
+      </div>
+      <button class="mini danger" data-delete-iso="${escapeHtml(iso.name)}">Delete</button>
+    </div>
+  `).join("") || `<div class="settings-empty">No ISOs registered.</div>`;
 }
 
 function renderAbout() {
@@ -1314,8 +1361,17 @@ async function handleDocumentActions(event) {
   }
   const rerunJob = event.target.closest("[data-rerun-job]");
   if (rerunJob) {
-    const job = state.jobs.find((item) => item.id === rerunJob.dataset.rerunJob) || await apiGet(`/jobs/${encodeURIComponent(rerunJob.dataset.rerunJob)}`);
-    await runJob(job.action, job.site_name);
+    const result = await apiPost(`/jobs/${encodeURIComponent(rerunJob.dataset.rerunJob)}/retry`, {});
+    writeResult("job retry queued", result);
+    await loadJobs();
+    return;
+  }
+  const cancelJob = event.target.closest("[data-cancel-job]");
+  if (cancelJob) {
+    const result = await apiPost(`/jobs/${encodeURIComponent(cancelJob.dataset.cancelJob)}/cancel`, {});
+    writeResult("job canceled", result);
+    await loadJobs();
+    if (state.selectedJobId === cancelJob.dataset.cancelJob) await refreshSelectedJobDetail();
     return;
   }
   const approve = event.target.closest("[data-approve]");
@@ -1395,6 +1451,20 @@ async function handleDocumentActions(event) {
   if (showDiscovery) {
     const run = state.discovery.find((item) => item.id === showDiscovery.dataset.showDiscovery);
     writeResult("discovery plan", run || {});
+    return;
+  }
+  const executeDiscovery = event.target.closest("[data-execute-discovery]");
+  if (executeDiscovery) {
+    const result = await apiPost(`/discovery/${encodeURIComponent(executeDiscovery.dataset.executeDiscovery)}/execute`, {});
+    writeResult("discovery executed", result);
+    await loadDiscovery();
+    return;
+  }
+  const deleteIso = event.target.closest("[data-delete-iso]");
+  if (deleteIso) {
+    const result = await apiDelete(`/isos/${encodeURIComponent(deleteIso.dataset.deleteIso)}`);
+    writeResult("iso deleted", result);
+    await loadIsos();
     return;
   }
   const editSite = event.target.closest("[data-edit-site]");
@@ -1521,6 +1591,18 @@ async function handleDocumentSubmit(event) {
     });
     writeResult("discovery planned", planned);
     await loadDiscovery();
+    return;
+  }
+  if (event.target.id === "isoForm") {
+    event.preventDefault();
+    const saved = await apiPost("/isos", {
+      name: value("#isoName"),
+      uri: value("#isoUri"),
+      checksum: value("#isoChecksum") || null,
+      checksum_algorithm: value("#isoChecksumAlgorithm") || "sha256",
+    });
+    writeResult("iso registered", saved);
+    await loadIsos();
     return;
   }
   if (event.target.id === "roleForm") {
@@ -1848,6 +1930,7 @@ function exampleSpec() {
 
 function jobPayload(action) {
   const credentials = {
+    credential_ref: els.bmcCredentialRef?.value || null,
     username: els.bmcUsername.value || null,
     password: els.bmcPassword.value || null,
     insecure: els.bmcInsecure.checked,
@@ -1857,10 +1940,12 @@ function jobPayload(action) {
   if (action === "mount-iso") {
     return {
       ...credentials,
+      iso_ref: els.isoRef?.value || null,
       iso_url: els.isoUrl.value || null,
       boot_once: els.isoBootOnce.checked,
     };
   }
+  if (action === "eject-iso") return credentials;
   return {};
 }
 

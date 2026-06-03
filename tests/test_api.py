@@ -272,6 +272,49 @@ def test_discovery_planner_returns_bounded_candidates() -> None:
     assert payload["result"]["candidates"][0]["status"] == "pending-scan"
 
 
+def test_discovery_execute_marks_candidates_ready_when_live_disabled() -> None:
+    client = TestClient(app)
+    planned = client.post(
+        "/discovery",
+        json={"name": "Ready scan", "cidr": "10.0.1.0/30", "provider": "generic-redfish"},
+    ).json()
+
+    executed = client.post(f"/discovery/{planned['id']}/execute")
+
+    assert executed.status_code == 200
+    assert executed.json()["status"] == "ready-for-live-scan"
+    assert executed.json()["result"]["candidates"][0]["status"] == "scan-ready"
+
+
+def test_iso_registry_round_trips() -> None:
+    client = TestClient(app)
+
+    saved = client.post(
+        "/isos",
+        json={"name": "azure-local-test", "uri": "https://repo.example.com/azure-local.iso", "checksum": "abc123"},
+    )
+    listed = client.get("/isos")
+
+    assert saved.status_code == 200
+    assert saved.json()["name"] == "azure-local-test"
+    assert any(iso["name"] == "azure-local-test" for iso in listed.json()["isos"])
+
+
+def test_job_cancel_and_retry_endpoints() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+    created = client.post("/sites/branch-001/jobs/validate").json()
+
+    canceled = client.post(f"/jobs/{created['job_id']}/cancel")
+    retried = client.post(f"/jobs/{created['job_id']}/retry")
+
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] in {"canceled", "succeeded", "failed"}
+    assert retried.status_code == 200
+    assert "job_id" in retried.json()
+
+
 def test_provider_detail_includes_configuration_template() -> None:
     client = TestClient(app)
 

@@ -120,6 +120,16 @@ class DiscoveryRunRecord(BaseModel):
     updated_at: str
 
 
+class IsoRecord(BaseModel):
+    name: str
+    uri: str
+    checksum: str | None = None
+    checksum_algorithm: str = "sha256"
+    status: str = "registered"
+    created_at: str
+    updated_at: str
+
+
 class SessionRecord(BaseModel):
     token_hash: str
     username: str
@@ -334,6 +344,19 @@ class StrataStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS iso_registry (
+                    name TEXT PRIMARY KEY,
+                    uri TEXT NOT NULL,
+                    checksum TEXT,
+                    checksum_algorithm TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version TEXT PRIMARY KEY,
                     applied_at TEXT NOT NULL
@@ -353,6 +376,7 @@ class StrataStore:
             ("001_core_state", "Core site, job, inventory, access, and session tables"),
             ("002_audit_approval_events", "Audit log, approval gates, job events, and provider configs"),
             ("003_secrets_discovery", "Secret references and discovery run history"),
+            ("004_iso_job_controls", "ISO registry and operator job control primitives"),
         ]
         applied = {item.version for item in self.list_migrations()}
         with self._connect() as conn:
@@ -485,6 +509,26 @@ class StrataStore:
             else:
                 rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
         return [self._job_from_row(row) for row in rows]
+
+    def cancel_job(self, job_id: str) -> JobRecord | None:
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if job.status in {"succeeded", "failed", "canceled"}:
+            return job
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET status = ?, error = ?, finished_at = ? WHERE id = ?",
+                ("canceled", "Canceled by operator", _now(), job_id),
+            )
+        self.add_job_event(job_id, "warning", "Job canceled by operator", {"status": "canceled"})
+        return self.get_job(job_id)
+
+    def retry_job(self, job_id: str) -> JobRecord | None:
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        return self.create_job(job.site_name, job.action, job.params)
 
     def save_inventory(self, report: InventoryReport) -> InventoryRecord:
         now = _now()
@@ -854,6 +898,14 @@ class StrataStore:
             )
         return self.get_discovery_run(run_id)  # type: ignore[return-value]
 
+    def update_discovery_run(self, run_id: str, status: str, result: dict[str, Any]) -> DiscoveryRunRecord | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE discovery_runs SET status = ?, result_json = ?, updated_at = ? WHERE id = ?",
+                (status, json.dumps(result), _now(), run_id),
+            )
+        return self.get_discovery_run(run_id)
+
     def get_discovery_run(self, run_id: str) -> DiscoveryRunRecord | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM discovery_runs WHERE id = ?", (run_id,)).fetchone()
@@ -863,6 +915,41 @@ class StrataStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC").fetchall()
         return [self._discovery_run_from_row(row) for row in rows]
+
+    def upsert_iso(self, name: str, uri: str, checksum: str | None = None, checksum_algorithm: str = "sha256", status: str = "registered") -> IsoRecord:
+        now = _now()
+        existing = self.get_iso(name)
+        created_at = existing.created_at if existing else now
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO iso_registry (name, uri, checksum, checksum_algorithm, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    uri=excluded.uri,
+                    checksum=excluded.checksum,
+                    checksum_algorithm=excluded.checksum_algorithm,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+                """,
+                (name, uri, checksum, checksum_algorithm, status, created_at, now),
+            )
+        return self.get_iso(name)  # type: ignore[return-value]
+
+    def get_iso(self, name: str) -> IsoRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM iso_registry WHERE name = ?", (name,)).fetchone()
+        return self._iso_from_row(row) if row else None
+
+    def list_isos(self) -> list[IsoRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM iso_registry ORDER BY name").fetchall()
+        return [self._iso_from_row(row) for row in rows]
+
+    def delete_iso(self, name: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM iso_registry WHERE name = ?", (name,))
+        return result.rowcount > 0
 
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
@@ -984,6 +1071,17 @@ class StrataStore:
             provider=row["provider"],
             status=row["status"],
             result=json.loads(row["result_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _iso_from_row(self, row) -> IsoRecord:
+        return IsoRecord(
+            name=row["name"],
+            uri=row["uri"],
+            checksum=row["checksum"],
+            checksum_algorithm=row["checksum_algorithm"],
+            status=row["status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

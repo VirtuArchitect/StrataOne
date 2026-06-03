@@ -99,6 +99,22 @@ class RedfishClient:
         )
         return self._post(node.bmc_ip, eject_action, {})
 
+    def probe_service_root(self, bmc_ip: str) -> dict[str, Any]:
+        try:
+            payload = self._get(bmc_ip, "/redfish/v1")
+            return {
+                "bmc_ip": bmc_ip,
+                "reachable": True,
+                "redfish_version": payload.get("RedfishVersion"),
+                "name": payload.get("Name"),
+                "uuid": payload.get("UUID"),
+                "systems": bool(payload.get("Systems", {}).get("@odata.id")),
+                "managers": bool(payload.get("Managers", {}).get("@odata.id")),
+                "status": "redfish-detected",
+            }
+        except Exception as exc:
+            return {"bmc_ip": bmc_ip, "reachable": False, "status": "unreachable", "error": str(exc)}
+
     def _get(self, bmc_ip: str, path: str) -> dict[str, Any]:
         response = self.session.get(
             f"https://{bmc_ip}{path}",

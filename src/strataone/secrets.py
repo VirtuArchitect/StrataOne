@@ -82,6 +82,32 @@ def resolve_bmc_credentials(site_name: str, params: dict[str, Any]) -> BmcSecret
     return get_secret_provider().bmc_credentials(site_name)
 
 
+def resolve_bmc_credentials_from_ref(secret: Any) -> BmcSecret | None:
+    if secret is None:
+        return None
+    payload = secret.model_dump(mode="json") if hasattr(secret, "model_dump") else dict(secret)
+    metadata = payload.get("metadata") or {}
+    provider = payload.get("provider")
+    reference = str(payload.get("reference") or "")
+    if provider == "env":
+        username_env = metadata.get("username_env")
+        password_env = metadata.get("password_env")
+        if not username_env and ":" in reference:
+            username_env, password_env = reference.split(":", 1)
+        elif not username_env:
+            username_env = f"{reference}_USERNAME"
+            password_env = f"{reference}_PASSWORD"
+        username = os.getenv(str(username_env))
+        password = os.getenv(str(password_env))
+        if username and password:
+            return BmcSecret(username=username, password=password)
+    if provider == "file":
+        file_path = Path(metadata.get("file") or os.getenv("STRATAONE_VAULT_FILE", ".strataone/secrets.json"))
+        payload = FileSecretProvider(file_path)._payload()
+        return _secret_from_payload(payload.get(reference) or payload.get("refs", {}).get(reference))
+    return None
+
+
 def _secret_from_payload(secret: Any) -> BmcSecret | None:
     if not isinstance(secret, dict):
         return None

@@ -18,7 +18,9 @@ from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.queue import queue_backend
+from strataone.redfish import RedfishClient
 from strataone.security import ALL_PERMISSIONS, AuthContext, auth_enabled, cors_origins, create_password_hash, new_session_token, require_permission, session_expiry, token_hash, verify_password, _bearer_token
+from strataone.secrets import BmcSecret, resolve_bmc_credentials_from_ref
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 from strataone.validation import validation_summary
@@ -34,9 +36,11 @@ class InventoryPayload(BaseModel):
 class JobPayload(BaseModel):
     username: str | None = None
     password: str | None = None
+    credential_ref: str | None = None
     insecure: bool | None = None
     timeout: float | None = None
     iso_url: HttpUrl | None = None
+    iso_ref: str | None = None
     boot_once: bool | None = None
     approval_id: str | None = None
 
@@ -85,6 +89,13 @@ class DiscoveryPayload(BaseModel):
     cidr: str
     provider: str = "generic-redfish"
     credential_ref: str | None = None
+
+
+class IsoPayload(BaseModel):
+    name: str
+    uri: HttpUrl
+    checksum: str | None = None
+    checksum_algorithm: str = "sha256"
 
 
 class ApprovalDecisionPayload(BaseModel):
@@ -445,6 +456,57 @@ def create_discovery(payload: DiscoveryPayload, context: AuthContext = Depends(r
     return record.model_dump(mode="json")
 
 
+@app.post("/discovery/{run_id}/execute")
+def execute_discovery(run_id: str, context: AuthContext = Depends(require_permission("run-inventory", store))) -> dict[str, Any]:
+    run = store.get_discovery_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="discovery run not found")
+    live = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
+    credential_ref = run.result.get("credential_ref")
+    secret = store.get_secret_ref(credential_ref) if credential_ref else None
+    credentials = resolve_bmc_credentials_from_ref(secret) or BmcSecret(username="", password="")
+    client = RedfishClient(credentials, timeout=float(os.getenv("STRATAONE_DISCOVERY_TIMEOUT", "5")), verify_tls=False)
+    scanned = []
+    for candidate in run.result.get("candidates", []):
+        bmc_ip = candidate.get("bmc_ip")
+        if live:
+            scanned.append(client.probe_service_root(str(bmc_ip)))
+        else:
+            scanned.append({**candidate, "status": "scan-ready", "reachable": None})
+    result = {
+        **run.result,
+        "mode": "live-redfish" if live else "planned",
+        "candidates": scanned,
+        "scanned_count": len(scanned),
+    }
+    status = "completed" if live else "ready-for-live-scan"
+    updated = store.update_discovery_run(run_id, status, result)
+    store.add_audit(context.username, "discovery.execute", f"discovery:{run_id}", {"status": status, "live": live})
+    return updated.model_dump(mode="json") if updated else run.model_dump(mode="json")
+
+
+@app.get("/isos")
+def list_isos(_: Any = read_sites) -> dict[str, Any]:
+    return {"isos": [item.model_dump(mode="json") for item in store.list_isos()]}
+
+
+@app.post("/isos")
+def save_iso(payload: IsoPayload, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="iso name is required")
+    record = store.upsert_iso(name, str(payload.uri), payload.checksum, payload.checksum_algorithm)
+    store.add_audit(context.username, "iso.upsert", f"iso:{name}", {"uri": record.uri, "checksum": bool(record.checksum)})
+    return record.model_dump(mode="json")
+
+
+@app.delete("/isos/{iso_name}")
+def delete_iso(iso_name: str, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, bool]:
+    deleted = store.delete_iso(iso_name)
+    store.add_audit(context.username, "iso.delete", f"iso:{iso_name}", {"deleted": deleted})
+    return {"deleted": deleted}
+
+
 @app.get("/access/roles")
 def list_roles(_: Any = manage_access) -> dict[str, Any]:
     return {"roles": [role.model_dump(mode="json") for role in store.list_roles()]}
@@ -546,7 +608,7 @@ def delete_site_record(site_name: str, _: Any = delete_sites) -> dict[str, bool]
 
 @app.post("/sites/{site_name}/jobs/{action}")
 def run_site_job(site_name: str, action: str, payload: JobPayload | None = None, authorization: str | None = Header(default=None)) -> dict[str, str]:
-    if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso", "deploy-azure-local", "drift-detect", "node-replacement"}:
+    if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso", "eject-iso", "deploy-azure-local", "drift-detect", "node-replacement"}:
         raise HTTPException(status_code=400, detail="unsupported action")
     if store.get_site(site_name) is None:
         raise HTTPException(status_code=404, detail="site not found")
@@ -578,6 +640,25 @@ def get_job_record(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
 @app.get("/jobs/{job_id}/events")
 def get_job_events(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
     return {"events": [event.model_dump(mode="json") for event in store.list_job_events(job_id)]}
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
+    job = store.cancel_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    store.add_audit(context.username, "job.cancel", f"job:{job_id}", {"status": job.status})
+    return job.model_dump(mode="json")
+
+
+@app.post("/jobs/{job_id}/retry")
+def retry_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    new_job_id = jobs.submit(job.site_name, job.action, job.params)
+    store.add_audit(context.username, "job.retry", f"job:{job_id}", {"new_job_id": new_job_id})
+    return {"job_id": new_job_id, "status": "queued"}
 
 
 @app.get("/jobs/{job_id}/events/stream")
@@ -730,6 +811,7 @@ def _permission_for_action(action: str) -> str:
         "preflight": "run-preflight",
         "artifacts": "generate-artifacts",
         "mount-iso": "mount-iso",
+        "eject-iso": "mount-iso",
         "deploy-azure-local": "run-plan",
         "drift-detect": "run-preflight",
         "node-replacement": "run-preflight",

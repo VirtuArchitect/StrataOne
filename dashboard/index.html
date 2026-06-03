@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-phase2a" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-phase2b" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -315,11 +315,16 @@
               </div>
               <div class="action-status" id="siteActionStatus">No site action running</div>
               <div class="iso-box">
+                <label>Registered ISO<select id="isoRef"></select></label>
                 <label>ISO URL<input id="isoUrl" placeholder="https://repo.example.com/azure-local.iso" /></label>
                 <label><input id="isoBootOnce" type="checkbox" checked /> Boot once from virtual media</label>
-                <button data-job="mount-iso">Mount ISO</button>
+                <div class="button-row">
+                  <button data-job="mount-iso">Mount ISO</button>
+                  <button class="secondary" data-job="eject-iso">Eject ISO</button>
+                </div>
               </div>
               <div class="credential-box">
+                <label>Credential Ref<select id="bmcCredentialRef"></select></label>
                 <label>BMC Username<input id="bmcUsername" autocomplete="username" /></label>
                 <label>BMC Password<input id="bmcPassword" type="password" autocomplete="current-password" /></label>
                 <div class="inline-controls">
@@ -540,6 +545,24 @@
               </div>
               <pre id="artifactOutput">{}</pre>
             </div>
+            <div class="panel span-12">
+              <div class="panel-header">
+                <div>
+                  <h2>ISO Registry</h2>
+                  <span>Register boot media for virtual media mount workflows</span>
+                </div>
+              </div>
+              <form class="settings-form iso-form" id="isoForm">
+                <div class="form-grid">
+                  <label>Name<input id="isoName" placeholder="azure-local-23h2" /></label>
+                  <label>URI<input id="isoUri" placeholder="https://repo.example.com/azure-local.iso" /></label>
+                  <label>Checksum<input id="isoChecksum" placeholder="optional sha256" /></label>
+                  <label>Algorithm<input id="isoChecksumAlgorithm" value="sha256" /></label>
+                </div>
+                <button type="submit">Register ISO</button>
+              </form>
+              <div class="settings-list" id="isoList"></div>
+            </div>
           </div>
         </section>
 
@@ -650,6 +673,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-phase2a"></script>
+    <script src="./app.js?v=20260603-phase2b"></script>
   </body>
 </html>
