@@ -42,6 +42,25 @@ class InventoryRecord(BaseModel):
     collected_at: str
 
 
+class RoleRecord(BaseModel):
+    name: str
+    description: str
+    permissions: list[str]
+    built_in: bool = False
+    created_at: str
+    updated_at: str
+
+
+class UserRecord(BaseModel):
+    username: str
+    display_name: str
+    email: str
+    roles: list[str]
+    status: str = "active"
+    created_at: str
+    updated_at: str
+
+
 class StrataStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or Path(os.getenv("STRATAONE_DB", ".strataone/strataone.db"))
@@ -94,6 +113,32 @@ class StrataStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS roles (
+                    name TEXT PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    permissions_json TEXT NOT NULL,
+                    built_in INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    roles_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        self.seed_access_defaults()
 
     def upsert_site(self, spec: SiteSpec) -> SiteRecord:
         now = _now()
@@ -212,6 +257,144 @@ class StrataStore:
             row = conn.execute("SELECT * FROM inventory WHERE site_name = ?", (site_name,)).fetchone()
         return self._inventory_from_row(row) if row else None
 
+    def seed_access_defaults(self) -> None:
+        defaults = [
+            RoleRecord(
+                name="Viewer",
+                description="Read-only access to sites, jobs, providers, and reports.",
+                permissions=["read-sites", "read-jobs", "read-providers"],
+                built_in=True,
+                created_at=_now(),
+                updated_at=_now(),
+            ),
+            RoleRecord(
+                name="Operator",
+                description="Runs inventory, preflight, artifact, and validation workflows.",
+                permissions=["run-inventory", "run-preflight", "generate-artifacts", "run-validate"],
+                built_in=True,
+                created_at=_now(),
+                updated_at=_now(),
+            ),
+            RoleRecord(
+                name="Deployment Admin",
+                description="Creates and edits deployment desired state.",
+                permissions=["create-sites", "update-sites", "delete-sites", "run-plan"],
+                built_in=True,
+                created_at=_now(),
+                updated_at=_now(),
+            ),
+            RoleRecord(
+                name="Platform Admin",
+                description="Manages providers, access posture, settings, and platform policy.",
+                permissions=["manage-providers", "manage-settings", "manage-access"],
+                built_in=True,
+                created_at=_now(),
+                updated_at=_now(),
+            ),
+            RoleRecord(
+                name="Auditor",
+                description="Reviews audit events, job history, and exported reports.",
+                permissions=["read-audit", "export-reports"],
+                built_in=True,
+                created_at=_now(),
+                updated_at=_now(),
+            ),
+        ]
+        for role in defaults:
+            if self.get_role(role.name) is None:
+                self.upsert_role(role)
+
+        if self.get_user("admin") is None:
+            self.upsert_user(
+                UserRecord(
+                    username="admin",
+                    display_name="Platform Administrator",
+                    email="admin@strataone.local",
+                    roles=["Platform Admin", "Deployment Admin"],
+                    status="active",
+                    created_at=_now(),
+                    updated_at=_now(),
+                )
+            )
+
+    def list_roles(self) -> list[RoleRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM roles ORDER BY built_in DESC, name").fetchall()
+        return [self._role_from_row(row) for row in rows]
+
+    def get_role(self, name: str) -> RoleRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM roles WHERE name = ?", (name,)).fetchone()
+        return self._role_from_row(row) if row else None
+
+    def upsert_role(self, role: RoleRecord) -> RoleRecord:
+        now = _now()
+        existing = self.get_role(role.name)
+        created_at = existing.created_at if existing else role.created_at or now
+        built_in = existing.built_in if existing else role.built_in
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO roles (name, description, permissions_json, built_in, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    description=excluded.description,
+                    permissions_json=excluded.permissions_json,
+                    built_in=roles.built_in,
+                    updated_at=excluded.updated_at
+                """,
+                (role.name, role.description, json.dumps(role.permissions), int(built_in), created_at, now),
+            )
+        return self.get_role(role.name)  # type: ignore[return-value]
+
+    def delete_role(self, name: str) -> bool:
+        role = self.get_role(name)
+        if role is None or role.built_in:
+            return False
+        with self._connect() as conn:
+            users = self.list_users()
+            for user in users:
+                if name in user.roles:
+                    remaining = [item for item in user.roles if item != name]
+                    conn.execute("UPDATE users SET roles_json = ?, updated_at = ? WHERE username = ?", (json.dumps(remaining), _now(), user.username))
+            result = conn.execute("DELETE FROM roles WHERE name = ?", (name,))
+        return result.rowcount > 0
+
+    def list_users(self) -> list[UserRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
+        return [self._user_from_row(row) for row in rows]
+
+    def get_user(self, username: str) -> UserRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return self._user_from_row(row) if row else None
+
+    def upsert_user(self, user: UserRecord) -> UserRecord:
+        now = _now()
+        existing = self.get_user(user.username)
+        created_at = existing.created_at if existing else user.created_at or now
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (username, display_name, email, roles_json, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    email=excluded.email,
+                    roles_json=excluded.roles_json,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+                """,
+                (user.username, user.display_name, user.email, json.dumps(user.roles), user.status, created_at, now),
+            )
+        return self.get_user(user.username)  # type: ignore[return-value]
+
+    def delete_user(self, username: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        return result.rowcount > 0
+
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
             name=row["name"],
@@ -243,6 +426,27 @@ class StrataStore:
             reachable_nodes=row["reachable_nodes"],
             total_nodes=row["total_nodes"],
             collected_at=row["collected_at"],
+        )
+
+    def _role_from_row(self, row: sqlite3.Row) -> RoleRecord:
+        return RoleRecord(
+            name=row["name"],
+            description=row["description"],
+            permissions=json.loads(row["permissions_json"]),
+            built_in=bool(row["built_in"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _user_from_row(self, row: sqlite3.Row) -> UserRecord:
+        return UserRecord(
+            username=row["username"],
+            display_name=row["display_name"],
+            email=row["email"],
+            roles=json.loads(row["roles_json"]),
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
 

@@ -96,10 +96,18 @@ function wireEvents() {
   });
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
+  document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
   document.querySelector("#previousStep").addEventListener("click", previousWizardStep);
   document.querySelector("#nextStep").addEventListener("click", nextWizardStep);
   document.querySelector("#newDeploymentTop").addEventListener("click", () => showView("deployments"));
   document.querySelector("#newDeploymentSites").addEventListener("click", () => showView("deployments"));
+  document.querySelector("#loadSelectedDeployment").addEventListener("click", loadSelectedDeploymentIntoWizard);
+  document.querySelector("#editSelectedSite").addEventListener("click", loadSelectedDeploymentIntoWizard);
+  document.querySelector("#deleteSelectedSite").addEventListener("click", deleteSelectedSite);
+  document.querySelector("#saveSelectedYaml").addEventListener("click", () => saveSite(parseTinyYaml(els.selectedYaml.value)));
+  document.querySelectorAll("[data-view-shortcut]").forEach((button) => {
+    button.addEventListener("click", () => showView(button.dataset.viewShortcut));
+  });
   document.querySelector("#loadExample").addEventListener("click", () => {
     els.siteYaml.value = exampleYaml;
     renderDeploymentSummary(exampleSpec());
@@ -130,6 +138,8 @@ function wireEvents() {
       showSettingsSection(button.dataset.settingsSection);
     });
   });
+  document.addEventListener("click", handleDocumentActions);
+  document.addEventListener("submit", handleDocumentSubmit);
 }
 
 function showView(view) {
@@ -271,6 +281,24 @@ async function saveSite(spec) {
   return record;
 }
 
+async function deleteSelectedSite() {
+  if (!state.selectedSite) return;
+  const deleted = await apiDelete(`/sites/${encodeURIComponent(state.selectedSite)}`);
+  writeResult("delete site", deleted);
+  state.selectedSite = null;
+  state.inventory = null;
+  await loadSites();
+}
+
+function loadSelectedDeploymentIntoWizard() {
+  const site = state.sites.find((item) => item.name === state.selectedSite);
+  if (!site) return;
+  hydrateDeploymentForm(site.spec);
+  els.siteYaml.value = toYaml(site.spec);
+  renderDeploymentSummary(site.spec);
+  showView("deployments");
+}
+
 async function runJob(action, siteName = state.selectedSite) {
   if (!siteName) return;
   const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, jobPayload(action));
@@ -302,9 +330,16 @@ function renderSites() {
       <td>${escapeHtml(site.hardware_provider)}</td>
       <td>${site.nodes}</td>
       <td>${formatDate(site.updated_at)}</td>
+      <td class="table-actions">
+        <button class="mini secondary" data-edit-site="${escapeHtml(site.name)}">Edit</button>
+        <button class="mini danger" data-delete-site="${escapeHtml(site.name)}">Delete</button>
+      </td>
     </tr>
-  `).join("") || `<tr><td colspan="5">No sites registered</td></tr>`;
-  document.querySelectorAll("[data-site]").forEach((row) => row.addEventListener("click", () => selectSite(row.dataset.site)));
+  `).join("") || `<tr><td colspan="6">No sites registered</td></tr>`;
+  document.querySelectorAll("[data-site]").forEach((row) => row.addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    selectSite(row.dataset.site);
+  }));
   renderSelectedSite();
 }
 
@@ -430,11 +465,58 @@ function renderSettingsSection(section, data) {
         ${settingCard("RBAC Enforced", data.rbac_enforced ? "enabled" : "planned")}
         ${settingCard("OIDC", data.oidc_enabled ? "configured" : "not configured")}
       </div>
+      <div class="rbac-grid">
+        <form class="settings-form" id="roleForm">
+          <h3>Create / Edit Role</h3>
+          <label>Role Name<input id="roleName" placeholder="Change Manager" /></label>
+          <label>Description<input id="roleDescription" placeholder="Approves deployment changes" /></label>
+          <label>Permissions<input id="rolePermissions" placeholder="approve-runs, read-audit" /></label>
+          <button type="submit">Save Role</button>
+        </form>
+        <form class="settings-form" id="userForm">
+          <h3>Create / Edit User</h3>
+          <label>Username<input id="accessUsername" placeholder="j.smith" /></label>
+          <label>Display Name<input id="accessDisplayName" placeholder="Jane Smith" /></label>
+          <label>Email<input id="accessEmail" placeholder="jane.smith@example.com" /></label>
+          <label>Roles<input id="accessRoles" placeholder="Operator, Viewer" /></label>
+          <label>Status
+            <select id="accessStatus">
+              <option value="active">Active</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          <button type="submit">Save User</button>
+        </form>
+      </div>
+      <h3>Roles</h3>
       <div class="settings-list">
         ${(data.roles || []).map((role) => `
           <div class="settings-row">
-            <strong>${escapeHtml(role.name)}</strong>
-            <span>${escapeHtml((role.permissions || []).join(", "))}</span>
+            <div>
+              <strong>${escapeHtml(role.name)} ${role.built_in ? '<span class="badge">built-in</span>' : ""}</strong>
+              <span>${escapeHtml(role.description || "No description")}</span>
+              <span>${escapeHtml((role.permissions || []).join(", "))}</span>
+            </div>
+            <div class="row-actions">
+              <button class="mini secondary" data-edit-role="${escapeHtml(role.name)}">Edit</button>
+              ${role.built_in ? "" : `<button class="mini danger" data-delete-role="${escapeHtml(role.name)}">Delete</button>`}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <h3>Users</h3>
+      <div class="settings-list">
+        ${(data.users || []).map((user) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(user.display_name)} <span class="badge">${escapeHtml(user.status)}</span></strong>
+              <span>${escapeHtml(user.username)} - ${escapeHtml(user.email)}</span>
+              <span>${escapeHtml((user.roles || []).join(", ") || "No roles assigned")}</span>
+            </div>
+            <div class="row-actions">
+              <button class="mini secondary" data-edit-user="${escapeHtml(user.username)}">Edit</button>
+              <button class="mini danger" data-delete-user="${escapeHtml(user.username)}">Delete</button>
+            </div>
           </div>
         `).join("")}
       </div>
@@ -454,6 +536,112 @@ function renderSettingsSection(section, data) {
     `;
   }
   return `<div class="settings-grid">${Object.entries(data).map(([key, value]) => settingCard(labelize(key), formatSettingValue(value))).join("")}</div>`;
+}
+
+function showSettingsEditor(section) {
+  if (section === "access") {
+    document.querySelector("#roleName")?.focus();
+    return;
+  }
+  const data = state.settings?.[section];
+  if (!data) return;
+  els.settingsContent.innerHTML = `
+    <form class="settings-form wide" id="settingsJsonForm">
+      <h3>Edit ${escapeHtml(settingsCopy[section]?.[0] || section)}</h3>
+      <textarea id="settingsJsonEditor" spellcheck="false">${escapeHtml(JSON.stringify(data, null, 2))}</textarea>
+      <div class="button-row"><button type="submit">Preview Settings</button><button class="secondary" type="button" data-settings-cancel>Cancel</button></div>
+    </form>
+  `;
+}
+
+async function handleDocumentActions(event) {
+  const editSite = event.target.closest("[data-edit-site]");
+  if (editSite) {
+    state.selectedSite = editSite.dataset.editSite;
+    loadSelectedDeploymentIntoWizard();
+    return;
+  }
+  const deleteSite = event.target.closest("[data-delete-site]");
+  if (deleteSite) {
+    state.selectedSite = deleteSite.dataset.deleteSite;
+    await deleteSelectedSite();
+    return;
+  }
+  const editRole = event.target.closest("[data-edit-role]");
+  if (editRole) {
+    const role = state.settings?.access?.roles?.find((item) => item.name === editRole.dataset.editRole);
+    if (role) {
+      document.querySelector("#roleName").value = role.name;
+      document.querySelector("#roleDescription").value = role.description || "";
+      document.querySelector("#rolePermissions").value = (role.permissions || []).join(", ");
+    }
+    return;
+  }
+  const deleteRole = event.target.closest("[data-delete-role]");
+  if (deleteRole) {
+    await apiDelete(`/access/roles/${encodeURIComponent(deleteRole.dataset.deleteRole)}`);
+    await loadSettings();
+    return;
+  }
+  const editUser = event.target.closest("[data-edit-user]");
+  if (editUser) {
+    const user = state.settings?.access?.users?.find((item) => item.username === editUser.dataset.editUser);
+    if (user) {
+      document.querySelector("#accessUsername").value = user.username;
+      document.querySelector("#accessDisplayName").value = user.display_name;
+      document.querySelector("#accessEmail").value = user.email;
+      document.querySelector("#accessRoles").value = (user.roles || []).join(", ");
+      document.querySelector("#accessStatus").value = user.status;
+    }
+    return;
+  }
+  const deleteUser = event.target.closest("[data-delete-user]");
+  if (deleteUser) {
+    await apiDelete(`/access/users/${encodeURIComponent(deleteUser.dataset.deleteUser)}`);
+    await loadSettings();
+    return;
+  }
+  if (event.target.closest("[data-settings-cancel]")) {
+    showSettingsSection(activeSettingsSection());
+    return;
+  }
+}
+
+async function handleDocumentSubmit(event) {
+  if (event.target.id === "roleForm") {
+    event.preventDefault();
+    const role = await apiPost("/access/roles", {
+      name: value("#roleName"),
+      description: value("#roleDescription"),
+      permissions: csv("#rolePermissions"),
+    });
+    writeResult("role saved", role);
+    await loadSettings();
+    return;
+  }
+  if (event.target.id === "userForm") {
+    event.preventDefault();
+    const user = await apiPost("/access/users", {
+      username: value("#accessUsername"),
+      display_name: value("#accessDisplayName"),
+      email: value("#accessEmail"),
+      roles: csv("#accessRoles"),
+      status: value("#accessStatus"),
+    });
+    writeResult("user saved", user);
+    await loadSettings();
+    return;
+  }
+  if (event.target.id === "settingsJsonForm") {
+    event.preventDefault();
+    try {
+      const parsed = JSON.parse(document.querySelector("#settingsJsonEditor").value);
+      writeResult("settings preview", parsed);
+      showSettingsSection(activeSettingsSection());
+    } catch (error) {
+      writeResult("settings edit error", { error: error.message });
+    }
+  }
 }
 
 function settingCard(label, value) {
@@ -541,6 +729,33 @@ function renderDeploymentSummary(spec) {
   }, null, 2);
 }
 
+function hydrateDeploymentForm(spec) {
+  setValue("#deployName", spec.site?.name || "");
+  setValue("#deployLocation", spec.site?.location || "");
+  setValue("#deployModel", spec.site?.deployment_model || "edge-hci");
+  setValue("#clusterName", spec.platform?.cluster_name || spec.site?.name || "");
+  setValue("#topology", spec.platform?.topology || "");
+  setValue("#subscriptionId", spec.platform?.azure?.subscription_id || "");
+  setValue("#tenantId", spec.platform?.azure?.tenant_id || "");
+  setValue("#resourceGroup", spec.platform?.azure?.resource_group || "");
+  setValue("#azureRegion", spec.platform?.azure?.region || "");
+  setValue("#managementVlan", spec.network?.management_vlan ?? "");
+  setValue("#storageVlan", spec.network?.storage_vlan ?? "");
+  setValue("#vmVlan", spec.network?.vm_vlan ?? "");
+  setValue("#dnsServers", (spec.network?.dns_servers || []).join(","));
+  setValue("#ntpServers", (spec.network?.ntp_servers || []).join(","));
+  setValue("#node1Serial", spec.hardware?.nodes?.[0]?.serial || "");
+  setValue("#node1Bmc", spec.hardware?.nodes?.[0]?.bmc_ip || "");
+  setValue("#node2Serial", spec.hardware?.nodes?.[1]?.serial || "");
+  setValue("#node2Bmc", spec.hardware?.nodes?.[1]?.bmc_ip || "");
+  document.querySelector("#workloadAks").checked = Boolean(spec.workloads?.aks);
+  document.querySelector("#workloadArcVms").checked = Boolean(spec.workloads?.arc_vms);
+  document.querySelector("#workloadAvd").checked = Boolean(spec.workloads?.avd);
+  selectChoice("hardware", spec.hardware?.vendor || "generic-redfish");
+  selectChoice("platform", spec.platform?.type || "azure-local");
+  showWizardStep("intent");
+}
+
 function exampleSpec() {
   return {
     site: { name: "branch-001", location: "berlin", deployment_model: "edge-hci" },
@@ -595,6 +810,12 @@ async function apiPost(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
+  return response.json();
+}
+
+async function apiDelete(path) {
+  const response = await fetchWithTimeout(`${apiBase}${path}`, { method: "DELETE" });
   if (!response.ok) throw new Error(`${path} failed with HTTP ${response.status}`);
   return response.json();
 }
@@ -712,6 +933,10 @@ function writeResult(label, payload) {
 
 function value(selector) {
   return document.querySelector(selector).value.trim();
+}
+
+function setValue(selector, value) {
+  document.querySelector(selector).value = value;
 }
 
 function numberValue(selector) {

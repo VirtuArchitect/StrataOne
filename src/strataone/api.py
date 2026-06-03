@@ -13,7 +13,7 @@ from strataone.jobs import JobRunner
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
 from strataone.providers.registry import list_providers
-from strataone.store import StrataStore, spec_from_record
+from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
 
 class SitePayload(BaseModel):
@@ -29,6 +29,20 @@ class JobPayload(BaseModel):
     password: str | None = None
     insecure: bool | None = None
     timeout: float | None = None
+
+
+class RolePayload(BaseModel):
+    name: str
+    description: str = ""
+    permissions: list[str] = []
+
+
+class UserPayload(BaseModel):
+    username: str
+    display_name: str
+    email: str
+    roles: list[str] = []
+    status: str = "active"
 
 
 store = StrataStore()
@@ -117,13 +131,8 @@ def settings() -> dict[str, Any]:
             "mode": "local-dev",
             "rbac_enforced": False,
             "oidc_enabled": bool(os.getenv("STRATAONE_OIDC_ISSUER")),
-            "roles": [
-                {"name": "Viewer", "permissions": ["read-sites", "read-jobs", "read-providers"]},
-                {"name": "Operator", "permissions": ["run-inventory", "run-preflight", "generate-artifacts"]},
-                {"name": "Deployment Admin", "permissions": ["create-sites", "update-sites", "run-plan"]},
-                {"name": "Platform Admin", "permissions": ["manage-providers", "manage-settings"]},
-                {"name": "Auditor", "permissions": ["read-audit", "export-reports"]},
-            ],
+            "users": [user.model_dump(mode="json") for user in store.list_users()],
+            "roles": [role.model_dump(mode="json") for role in store.list_roles()],
         },
         "secrets": {
             "bmc_username_configured": bool(os.getenv("STRATAONE_BMC_USERNAME")),
@@ -159,6 +168,66 @@ def settings() -> dict[str, Any]:
             "configuration_change_tracking": "planned",
         },
     }
+
+
+@app.get("/access/roles")
+def list_roles() -> dict[str, Any]:
+    return {"roles": [role.model_dump(mode="json") for role in store.list_roles()]}
+
+
+@app.post("/access/roles")
+def create_or_update_role(payload: RolePayload) -> dict[str, Any]:
+    if not payload.name.strip():
+        raise HTTPException(status_code=422, detail="role name is required")
+    role = RoleRecord(
+        name=payload.name.strip(),
+        description=payload.description.strip() or "Custom StrataOne role",
+        permissions=[permission.strip() for permission in payload.permissions if permission.strip()],
+        built_in=False,
+        created_at="",
+        updated_at="",
+    )
+    return store.upsert_role(role).model_dump(mode="json")
+
+
+@app.delete("/access/roles/{role_name}")
+def delete_role(role_name: str) -> dict[str, bool]:
+    deleted = store.delete_role(role_name)
+    if not deleted:
+        role = store.get_role(role_name)
+        if role and role.built_in:
+            raise HTTPException(status_code=409, detail="built-in roles cannot be deleted")
+    return {"deleted": deleted}
+
+
+@app.get("/access/users")
+def list_users() -> dict[str, Any]:
+    return {"users": [user.model_dump(mode="json") for user in store.list_users()]}
+
+
+@app.post("/access/users")
+def create_or_update_user(payload: UserPayload) -> dict[str, Any]:
+    if not payload.username.strip():
+        raise HTTPException(status_code=422, detail="username is required")
+    known_roles = {role.name for role in store.list_roles()}
+    unknown_roles = [role for role in payload.roles if role not in known_roles]
+    if unknown_roles:
+        raise HTTPException(status_code=422, detail=f"unknown roles: {', '.join(unknown_roles)}")
+    user = UserRecord(
+        username=payload.username.strip(),
+        display_name=payload.display_name.strip() or payload.username.strip(),
+        email=payload.email.strip(),
+        roles=payload.roles,
+        status=payload.status,
+        created_at="",
+        updated_at="",
+    )
+    return store.upsert_user(user).model_dump(mode="json")
+
+
+@app.delete("/access/users/{username}")
+def delete_user(username: str) -> dict[str, bool]:
+    return {"deleted": store.delete_user(username)}
 
 
 @app.get("/sites")

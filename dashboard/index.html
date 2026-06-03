@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-settings2" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-enterprise1" />
   </head>
   <body>
     <div class="app-shell">
@@ -17,16 +17,26 @@
           </div>
         </div>
 
+        <div class="install-pill"><span></span> Framework installed</div>
+
         <nav class="primary-nav" aria-label="Primary">
-          <button class="nav-item active" data-view="overview">Overview</button>
+          <span class="nav-group">Overview</span>
+          <button class="nav-item active" data-view="overview">Dashboard</button>
           <button class="nav-item" data-view="deployments">Deployments</button>
           <button class="nav-item" data-view="sites">Sites</button>
-          <button class="nav-item" data-view="jobs">Jobs</button>
+          <span class="nav-group">Configure</span>
           <button class="nav-item" data-view="providers">Providers</button>
           <button class="nav-item" data-view="artifacts">Artifacts</button>
+          <span class="nav-group">Execute</span>
+          <button class="nav-item" data-view="jobs">Orchestration Runs</button>
           <button class="nav-item" data-view="lifecycle">Lifecycle</button>
+          <span class="nav-group">Admin</span>
           <button class="nav-item" data-view="settings">Settings</button>
         </nav>
+        <div class="sidebar-footer">
+          <strong>StrataOne Orchestrator</strong>
+          <span>Enterprise preview</span>
+        </div>
       </aside>
 
       <main>
@@ -37,10 +47,19 @@
           </div>
           <div class="topbar-actions">
             <div class="status-pill" id="apiStatus">API: checking</div>
+            <div class="user-chip">j.goulden <span>admin</span></div>
             <button id="newDeploymentTop">New Deployment</button>
             <button class="secondary" id="refreshAll">Refresh</button>
           </div>
         </header>
+
+        <section class="readiness-banner">
+          <div>
+            <strong>Framework ready for orchestration</strong>
+            <span>System checks refresh every 30 seconds. Review failures before launching workflows.</span>
+          </div>
+          <button class="secondary" data-view-shortcut="jobs">View Execution History</button>
+        </section>
 
         <section class="metric-grid">
           <div class="metric"><span>Sites</span><strong id="siteCount">0</strong></div>
@@ -77,7 +96,7 @@
             <div class="panel span-6">
               <div class="panel-header">
                 <div>
-                  <h2>Recent Jobs</h2>
+                  <h2>Recent Runs</h2>
                   <span>Latest orchestration activity</span>
                 </div>
               </div>
@@ -103,7 +122,10 @@
                   <h2>New Deployment</h2>
                   <span>Define site intent, hardware, platform, network, and workloads</span>
                 </div>
-                <button id="loadExample">Load Example</button>
+                <div class="button-row">
+                  <button class="secondary" id="loadSelectedDeployment">Edit Selected</button>
+                  <button id="loadExample">Load Example</button>
+                </div>
               </div>
 
               <div class="wizard-steps">
@@ -201,7 +223,7 @@
                   <h2>Desired State</h2>
                   <span>Generated YAML for the selected or new deployment</span>
                 </div>
-                <button id="saveSite">Save Site</button>
+                <button id="saveSite">Save Deployment</button>
               </div>
               <textarea id="siteYaml" spellcheck="false"></textarea>
             </div>
@@ -226,6 +248,7 @@
                     <th>Hardware</th>
                     <th>Nodes</th>
                     <th>Updated</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="sitesTable"></tbody>
@@ -237,6 +260,10 @@
                 <div>
                   <h2>Selected Site</h2>
                   <span id="selectedSiteLabel">none</span>
+                </div>
+                <div class="button-row">
+                  <button class="secondary" id="editSelectedSite">Edit</button>
+                  <button class="danger" id="deleteSelectedSite">Delete</button>
                 </div>
               </div>
               <div class="action-grid">
@@ -273,6 +300,7 @@
                   <h2>Site YAML</h2>
                   <span>Editable desired state for the selected site</span>
                 </div>
+                <button id="saveSelectedYaml">Save Edits</button>
               </div>
               <textarea id="selectedYaml" spellcheck="false"></textarea>
             </div>
@@ -363,7 +391,10 @@
                   <h2 id="settingsTitle">General</h2>
                   <span id="settingsSubtitle">Instance identity and runtime defaults</span>
                 </div>
-                <button class="secondary" id="refreshSettings">Refresh Settings</button>
+                <div class="button-row">
+                  <button class="secondary" id="editSettingsSection">Edit</button>
+                  <button class="secondary" id="refreshSettings">Refresh Settings</button>
+                </div>
               </div>
               <div class="settings-content" id="settingsContent"></div>
             </section>
@@ -372,6 +403,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260603-settings2"></script>
+    <script src="./app.js?v=20260603-enterprise1"></script>
   </body>
 </html>

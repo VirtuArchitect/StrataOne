@@ -70,6 +70,35 @@ def test_settings_endpoint_returns_enterprise_sections() -> None:
     assert "hardware" in payload["providers"]
 
 
+def test_access_api_creates_roles_and_users() -> None:
+    client = TestClient(app)
+
+    role_response = client.post(
+        "/access/roles",
+        json={"name": "Change Manager", "description": "Approves deployment windows", "permissions": ["approve-runs"]},
+    )
+    assert role_response.status_code == 200
+    assert role_response.json()["name"] == "Change Manager"
+
+    user_response = client.post(
+        "/access/users",
+        json={
+            "username": "j.smith",
+            "display_name": "Jane Smith",
+            "email": "jane.smith@example.com",
+            "roles": ["Change Manager"],
+            "status": "active",
+        },
+    )
+    assert user_response.status_code == 200
+    assert user_response.json()["roles"] == ["Change Manager"]
+
+    settings_response = client.get("/settings")
+    access = settings_response.json()["access"]
+    assert any(role["name"] == "Change Manager" for role in access["roles"])
+    assert any(user["username"] == "j.smith" for user in access["users"])
+
+
 def test_artifact_endpoint_generates_bundle() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()
