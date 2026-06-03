@@ -320,6 +320,37 @@
           </div>
         </section>
 
+        <section class="view" id="view-deployment-detail" hidden>
+          <div class="deployment-detail-shell">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2 id="deploymentDetailTitle">Deployment Detail</h2>
+                  <span id="deploymentDetailSubtitle">Site operational summary</span>
+                </div>
+                <div class="button-row">
+                  <button class="secondary" data-detail-tab="overview">Overview</button>
+                  <button class="secondary" data-detail-tab="nodes">Nodes</button>
+                  <button class="secondary" data-detail-tab="runs">Runs</button>
+                  <button class="secondary" data-detail-tab="inventory">Inventory</button>
+                  <button class="secondary" data-detail-tab="artifacts">Artifacts</button>
+                  <button class="secondary" data-detail-tab="lifecycle">Lifecycle</button>
+                </div>
+              </div>
+              <div class="detail-action-bar">
+                <button data-job="validate">Validate</button>
+                <button data-job="plan">Plan</button>
+                <button data-job="inventory">Inventory</button>
+                <button data-job="preflight">Preflight</button>
+                <button data-job="artifacts">Artifacts</button>
+                <button data-job="mount-iso">Mount ISO</button>
+                <button data-job="deploy-azure-local">Deploy Azure Local</button>
+              </div>
+              <div class="deployment-detail-content" id="deploymentDetailContent"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="view-jobs" hidden>
           <div class="layout-grid">
             <div class="panel span-5">
@@ -368,7 +399,7 @@
               <ol class="flow-list">
                 <li><strong>Request</strong><span>Live or high-impact actions create a pending approval.</span></li>
                 <li><strong>Review</strong><span>Operators inspect site, action, parameters, and audit context.</span></li>
-                <li><strong>Approve or reject</strong><span>Approved runs can be resubmitted with the approval id.</span></li>
+                <li><strong>Approve or reject</strong><span>Approved runs can be launched immediately from the approval queue.</span></li>
               </ol>
             </div>
           </div>
@@ -410,6 +441,7 @@
                 <button class="secondary" type="button" id="cancelProviderConfig">Close</button>
               </div>
             </form>
+            <div class="provider-matrix" id="providerMatrix"></div>
             <div class="provider-list" id="providerList"></div>
           </div>
         </section>
@@ -425,6 +457,7 @@
                 <button data-job="artifacts">Generate</button>
               </div>
               <dl class="detail-list" id="artifactDetails"></dl>
+              <div class="artifact-list" id="artifactList"></div>
             </div>
             <div class="panel span-7">
               <div class="panel-header">
@@ -497,6 +530,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-features1"></script>
+    <script src="./app.js?v=20260603-features2"></script>
   </body>
 </html>

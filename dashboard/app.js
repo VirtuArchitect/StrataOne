@@ -7,11 +7,14 @@ const state = {
   jobs: [],
   providers: [],
   approvals: [],
+  artifacts: [],
   audit: [],
   sessions: [],
   settings: null,
   inventory: null,
   selectedJobId: null,
+  selectedDetailTab: "overview",
+  eventStreamAbort: null,
   selectedSite: null,
   selectedHardware: "generic-redfish",
   selectedPlatform: "azure-local",
@@ -49,6 +52,11 @@ const els = {
   resultOutput: document.querySelector("#resultOutput"),
   artifactOutput: document.querySelector("#artifactOutput"),
   artifactDetails: document.querySelector("#artifactDetails"),
+  artifactList: document.querySelector("#artifactList"),
+  deploymentDetailTitle: document.querySelector("#deploymentDetailTitle"),
+  deploymentDetailSubtitle: document.querySelector("#deploymentDetailSubtitle"),
+  deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
+  providerMatrix: document.querySelector("#providerMatrix"),
   settingsTitle: document.querySelector("#settingsTitle"),
   settingsSubtitle: document.querySelector("#settingsSubtitle"),
   settingsContent: document.querySelector("#settingsContent"),
@@ -78,6 +86,7 @@ const viewCopy = {
   overview: ["Overview", "Fleet health, deployment readiness, and orchestration activity."],
   deployments: ["Deployments", "Create deployments and generate desired state for hardware and hypervisor targets."],
   sites: ["Sites", "Manage registered site definitions and run operational actions."],
+  "deployment-detail": ["Deployment Detail", "Inspect one deployment across nodes, runs, inventory, artifacts, and lifecycle."],
   jobs: ["Jobs", "Inspect queued, running, failed, and completed orchestration jobs."],
   approvals: ["Approvals", "Review and approve live infrastructure actions before execution."],
   providers: ["Providers", "Review available hardware and platform providers."],
@@ -196,6 +205,9 @@ function wireEvents() {
   });
   document.querySelectorAll("[data-job]").forEach((button) => {
     button.addEventListener("click", () => runJob(button.dataset.job));
+  });
+  document.querySelectorAll("[data-detail-tab]").forEach((button) => {
+    button.addEventListener("click", () => showDeploymentDetailTab(button.dataset.detailTab));
   });
   document.querySelectorAll(".settings-tab").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -395,13 +407,15 @@ function loadSelectedDeploymentIntoWizard() {
   showView("deployments");
 }
 
-async function runJob(action, siteName = state.selectedSite) {
+async function runJob(action, siteName = state.selectedSite, extraParams = {}) {
   if (!siteName) return;
   try {
-    const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, jobPayload(action));
+    const created = await apiPost(`/sites/${encodeURIComponent(siteName)}/jobs/${action}`, { ...jobPayload(action), ...extraParams });
     if (created.status === "approval-required") {
       writeResult(`${action} approval required`, created);
       writeSiteAction(`${action} requires approval ${created.approval_id}`, "info");
+      await loadApprovals();
+      showView("approvals");
       return;
     }
     writeResult(`${action} queued`, created);
@@ -440,6 +454,7 @@ function renderSites() {
       <td>${formatDate(site.updated_at)}</td>
       <td class="table-actions">
         <button class="mini secondary" data-edit-site="${escapeHtml(site.name)}">Edit</button>
+        <button class="mini secondary" data-open-deployment="${escapeHtml(site.name)}">Open</button>
         <button class="mini danger" data-delete-site="${escapeHtml(site.name)}">Delete</button>
       </td>
     </tr>
@@ -481,6 +496,7 @@ function renderSelectedSite() {
     Cluster: site.spec.platform?.cluster_name || site.name,
     "Last action": latestJob("artifacts")?.status || "not generated",
   });
+  renderDeploymentDetail();
 }
 
 function renderFleet() {
@@ -536,6 +552,7 @@ async function openJobDetail(jobId) {
     apiGet(`/jobs/${encodeURIComponent(jobId)}/events`),
   ]);
   renderJobDetail(job, events.events || []);
+  streamJobEvents(jobId);
   writeResult(`${job.action} ${job.status}`, job);
 }
 
@@ -577,7 +594,7 @@ function renderJobDetail(job, events) {
       `).join("")}
     </div>
     <h3>Event Stream</h3>
-    <div class="event-list">
+    <div class="event-list" id="activeEventList">
       ${events.map((event) => `
         <div class="event-row ${escapeHtml(event.level)}">
           <strong>${escapeHtml(event.message)}</strong>
@@ -586,6 +603,52 @@ function renderJobDetail(job, events) {
       `).join("") || `<div class="settings-empty">No events recorded yet.</div>`}
     </div>
   `;
+}
+
+async function streamJobEvents(jobId) {
+  if (state.eventStreamAbort) state.eventStreamAbort.abort();
+  if (!state.authToken) return;
+  const controller = new AbortController();
+  state.eventStreamAbort = controller;
+  try {
+    const response = await fetch(`${apiBase}/jobs/${encodeURIComponent(jobId)}/events/stream`, {
+      headers: { Authorization: `Bearer ${state.authToken}` },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+      chunks.forEach(appendSseEvent);
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") writeResult("event stream failed", { error: error.message });
+  }
+}
+
+function appendSseEvent(chunk) {
+  const line = chunk.split("\n").find((item) => item.startsWith("data: "));
+  if (!line) return;
+  try {
+    const event = JSON.parse(line.slice(6));
+    const list = document.querySelector("#activeEventList");
+    if (!list || list.querySelector(`[data-event-id="${event.id}"]`)) return;
+    list.insertAdjacentHTML("beforeend", `
+      <div class="event-row ${escapeHtml(event.level)}" data-event-id="${escapeHtml(event.id)}">
+        <strong>${escapeHtml(event.message)}</strong>
+        <span>${formatDate(event.created_at)} - ${escapeHtml(JSON.stringify(event.detail || {}))}</span>
+      </div>
+    `);
+    list.scrollTop = list.scrollHeight;
+  } catch {
+    return;
+  }
 }
 
 function jobTimeline(job, events) {
@@ -607,6 +670,19 @@ async function loadInventory() {
   }
   renderInventory();
   renderSelectedSite();
+  renderDeploymentDetail();
+}
+
+async function loadArtifacts(siteName = state.selectedSite) {
+  if (!siteName) return;
+  try {
+    const data = await apiGet(`/sites/${encodeURIComponent(siteName)}/artifacts/files`);
+    state.artifacts = data.files || [];
+  } catch {
+    state.artifacts = [];
+  }
+  renderArtifactsList();
+  renderDeploymentDetail();
 }
 
 function renderInventory() {
@@ -628,7 +704,160 @@ function renderInventory() {
   `).join("");
 }
 
+function renderArtifactsList() {
+  if (!els.artifactList) return;
+  els.artifactList.innerHTML = state.artifacts.map((file) => `
+    <button class="list-item artifact-item" data-artifact-file="${escapeHtml(file.name)}">
+      <strong>${escapeHtml(file.name)}</strong>
+      <span>${Math.ceil(file.size_bytes / 1024)} KB - ${formatDate(file.updated_at)}</span>
+    </button>
+  `).join("") || `<div class="list-item"><strong>No artifact files</strong><span>Generate artifacts for the selected site to populate this list.</span></div>`;
+}
+
+function openDeploymentDetail(siteName = state.selectedSite) {
+  if (!siteName) return;
+  state.selectedSite = siteName;
+  state.selectedDetailTab = "overview";
+  showView("deployment-detail");
+  renderDeploymentDetail();
+  loadInventory();
+  loadArtifacts(siteName);
+}
+
+function showDeploymentDetailTab(tab) {
+  state.selectedDetailTab = tab;
+  document.querySelectorAll("[data-detail-tab]").forEach((button) => button.classList.toggle("active", button.dataset.detailTab === tab));
+  renderDeploymentDetail();
+  if (tab === "artifacts") loadArtifacts();
+}
+
+function renderDeploymentDetail() {
+  if (!els.deploymentDetailContent) return;
+  const site = state.sites.find((item) => item.name === state.selectedSite);
+  if (!site) {
+    els.deploymentDetailTitle.textContent = "Deployment Detail";
+    els.deploymentDetailSubtitle.textContent = "No deployment selected";
+    els.deploymentDetailContent.innerHTML = `<div class="settings-empty">Select or create a deployment to inspect operational detail.</div>`;
+    return;
+  }
+  els.deploymentDetailTitle.textContent = site.name;
+  els.deploymentDetailSubtitle.textContent = `${site.platform} - ${site.hardware_provider} - ${site.nodes} nodes`;
+  document.querySelectorAll("[data-detail-tab]").forEach((button) => button.classList.toggle("active", button.dataset.detailTab === state.selectedDetailTab));
+  const renderers = {
+    overview: () => renderDeploymentOverview(site),
+    nodes: () => renderDeploymentNodes(site),
+    runs: () => renderDeploymentRuns(site),
+    inventory: () => renderInventoryComparison(site),
+    artifacts: () => renderDeploymentArtifacts(site),
+    lifecycle: () => renderDeploymentLifecycle(site),
+  };
+  els.deploymentDetailContent.innerHTML = (renderers[state.selectedDetailTab] || renderers.overview)();
+}
+
+function renderDeploymentOverview(site) {
+  return `
+    <div class="settings-grid">
+      ${settingCard("Platform", site.platform)}
+      ${settingCard("Hardware", site.hardware_provider)}
+      ${settingCard("Nodes", site.nodes)}
+      ${settingCard("Location", site.spec.site?.location || "-")}
+      ${settingCard("Model", site.spec.site?.deployment_model || "-")}
+      ${settingCard("Latest Run", latestJobForSite(site.name)?.status || "none")}
+    </div>
+    <h3>Operational Readiness</h3>
+    ${renderReadinessList(validateDeploymentSpec(site.spec))}
+  `;
+}
+
+function renderDeploymentNodes(site) {
+  return `
+    <div class="settings-list">
+      ${(site.spec.hardware?.nodes || []).map((node, index) => `
+        <div class="settings-row">
+          <div>
+            <strong>${escapeHtml(node.serial || `Node ${index + 1}`)}</strong>
+            <span>${escapeHtml(node.bmc_ip || "-")} - ${escapeHtml(node.role || "host")}</span>
+          </div>
+          <button class="mini secondary" data-edit-site="${escapeHtml(site.name)}">Edit</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderDeploymentRuns(site) {
+  const jobs = state.jobs.filter((job) => job.site_name === site.name);
+  return `<div class="settings-list">${jobs.map(jobItem).join("") || `<div class="settings-empty">No runs for this deployment.</div>`}</div>`;
+}
+
+function renderInventoryComparison(site) {
+  const desired = site.spec.hardware?.nodes || [];
+  const actual = state.inventory?.report?.nodes || [];
+  return `
+    <div class="settings-grid">
+      ${settingCard("Desired Nodes", desired.length)}
+      ${settingCard("Inventory Nodes", actual.length)}
+      ${settingCard("Reachable", state.inventory ? `${state.inventory.reachable_nodes}/${state.inventory.total_nodes}` : "not collected")}
+    </div>
+    <div class="settings-list">
+      ${desired.map((node) => {
+        const observed = actual.find((item) => item.serial === node.serial || item.bmc_ip === node.bmc_ip);
+        const status = observed ? (observed.reachable ? "matched" : "unreachable") : "missing";
+        return `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(node.serial)} <span class="badge">${escapeHtml(status)}</span></strong>
+              <span>Desired BMC ${escapeHtml(node.bmc_ip)}${observed ? ` - observed ${escapeHtml(observed.manufacturer || "")} ${escapeHtml(observed.model || "")}` : ""}</span>
+              <span>Firmware ${(observed?.firmware || []).length} - NICs ${(observed?.nics || []).length} - Storage ${(observed?.storage || []).length}</span>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderDeploymentArtifacts(site) {
+  return `
+    <div class="button-row detail-actions"><button data-job="artifacts">Generate Artifacts</button><button class="secondary" data-refresh-artifacts="${escapeHtml(site.name)}">Refresh Files</button></div>
+    <div class="settings-list">
+      ${state.artifacts.map((file) => `
+        <div class="settings-row">
+          <div>
+            <strong>${escapeHtml(file.name)}</strong>
+            <span>${Math.ceil(file.size_bytes / 1024)} KB - ${formatDate(file.updated_at)}</span>
+          </div>
+          <button class="mini secondary" data-artifact-file="${escapeHtml(file.name)}">View</button>
+        </div>
+      `).join("") || `<div class="settings-empty">No artifact files generated yet.</div>`}
+    </div>
+  `;
+}
+
+function renderDeploymentLifecycle(site) {
+  return `
+    <div class="settings-list">
+      ${lifecycleItems.map((item) => `
+        <div class="settings-row">
+          <div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <span>${escapeHtml(item.summary)}</span>
+          </div>
+          <button class="mini secondary" data-lifecycle-run="${escapeHtml(item.id)}">Run</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderReadinessList(issues) {
+  return issues.length
+    ? `<div class="readiness-panel blocked"><strong>${issues.length} issue${issues.length === 1 ? "" : "s"}</strong><ul>${issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul></div>`
+    : `<div class="readiness-panel ready"><strong>Ready</strong><span>Desired state passes dashboard readiness validation.</span></div>`;
+}
+
 function renderProviders() {
+  renderProviderMatrix();
   els.providerList.innerHTML = state.providers.map((provider) => `
     <div class="list-item provider-card">
       <div>
@@ -645,6 +874,32 @@ function renderProviders() {
   `).join("");
 }
 
+function renderProviderMatrix() {
+  if (!els.providerMatrix) return;
+  const capabilities = ["inventory", "power", "iso mount", "firmware", "deploy", "drift", "node replace"];
+  els.providerMatrix.innerHTML = `
+    <div class="matrix-header">
+      <strong>Provider Capability Matrix</strong>
+      <span>Configuration and supported operation posture</span>
+    </div>
+    <div class="capability-matrix">
+      <div class="matrix-row matrix-head"><span>Provider</span>${capabilities.map((capability) => `<span>${escapeHtml(capability)}</span>`).join("")}</div>
+      ${state.providers.map((provider) => `
+        <div class="matrix-row">
+          <span>${escapeHtml(provider.name)}</span>
+          ${capabilities.map((capability) => `<span class="${providerCapability(provider, capability) ? "status-succeeded" : "status-running"}">${providerCapability(provider, capability) ? "Yes" : "Planned"}</span>`).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function providerCapability(provider, capability) {
+  if (provider.type === "hardware") return ["inventory", "power", "iso mount", "firmware"].includes(capability);
+  if (provider.name === "azure-local") return ["deploy", "drift", "node replace"].includes(capability);
+  return ["drift"].includes(capability);
+}
+
 function renderApprovals() {
   if (!els.approvalsList) return;
   els.approvalsList.innerHTML = state.approvals.map((approval) => `
@@ -657,6 +912,7 @@ function renderApprovals() {
       <div class="row-actions">
         ${approval.status === "pending" ? `
           <button class="mini" data-approve="${escapeHtml(approval.id)}">Approve</button>
+          <button class="mini" data-approve-run="${escapeHtml(approval.id)}">Approve & Run</button>
           <button class="mini danger" data-reject="${escapeHtml(approval.id)}">Reject</button>
         ` : `<button class="mini secondary" disabled>${escapeHtml(approval.status)}</button>`}
       </div>
@@ -752,6 +1008,9 @@ function renderSettingsSection(section, data) {
           <label>Role Name<input id="roleName" placeholder="Change Manager" /></label>
           <label>Description<input id="roleDescription" placeholder="Approves deployment changes" /></label>
           <label>Permissions<input id="rolePermissions" placeholder="approve-runs, read-audit" /></label>
+          <div class="permission-picker">
+            ${(data.permissions || []).map((permission) => `<label><input type="checkbox" data-permission="${escapeHtml(permission)}" /> ${escapeHtml(permission)}</label>`).join("")}
+          </div>
           <button type="submit">Save Role</button>
         </form>
         <form class="settings-form" id="userForm">
@@ -897,6 +1156,15 @@ async function handleDocumentActions(event) {
     await loadApprovals();
     return;
   }
+  const approveRun = event.target.closest("[data-approve-run]");
+  if (approveRun) {
+    const result = await apiPost(`/approvals/${encodeURIComponent(approveRun.dataset.approveRun)}/run`, {});
+    writeResult("approval approved and queued", result);
+    await Promise.all([loadApprovals(), loadJobs()]);
+    showView("jobs");
+    await openJobDetail(result.job_id);
+    return;
+  }
   const reject = event.target.closest("[data-reject]");
   if (reject) {
     const result = await apiPost(`/approvals/${encodeURIComponent(reject.dataset.reject)}/reject`, { reason: "Rejected from dashboard" });
@@ -953,6 +1221,11 @@ async function handleDocumentActions(event) {
     loadSelectedDeploymentIntoWizard();
     return;
   }
+  const openDeployment = event.target.closest("[data-open-deployment]");
+  if (openDeployment) {
+    openDeploymentDetail(openDeployment.dataset.openDeployment);
+    return;
+  }
   const deleteSite = event.target.closest("[data-delete-site]");
   if (deleteSite) {
     state.selectedSite = deleteSite.dataset.deleteSite;
@@ -966,6 +1239,9 @@ async function handleDocumentActions(event) {
       document.querySelector("#roleName").value = role.name;
       document.querySelector("#roleDescription").value = role.description || "";
       document.querySelector("#rolePermissions").value = (role.permissions || []).join(", ");
+      document.querySelectorAll("[data-permission]").forEach((input) => {
+        input.checked = (role.permissions || []).includes(input.dataset.permission);
+      });
     }
     return;
   }
@@ -1005,6 +1281,16 @@ async function handleDocumentActions(event) {
     showSettingsSection(activeSettingsSection());
     return;
   }
+  const artifactFile = event.target.closest("[data-artifact-file]");
+  if (artifactFile) {
+    await openArtifactFile(artifactFile.dataset.artifactFile);
+    return;
+  }
+  const refreshArtifacts = event.target.closest("[data-refresh-artifacts]");
+  if (refreshArtifacts) {
+    await loadArtifacts(refreshArtifacts.dataset.refreshArtifacts);
+    return;
+  }
 }
 
 async function handleDocumentSubmit(event) {
@@ -1035,7 +1321,7 @@ async function handleDocumentSubmit(event) {
     const role = await apiPost("/access/roles", {
       name: value("#roleName"),
       description: value("#roleDescription"),
-      permissions: csv("#rolePermissions"),
+      permissions: selectedPermissions(),
     });
     writeResult("role saved", role);
     await loadSettings();
@@ -1127,6 +1413,14 @@ function labelize(value) {
 
 function renderArtifactResult(result) {
   els.artifactOutput.textContent = JSON.stringify(result, null, 2);
+  loadArtifacts();
+}
+
+async function openArtifactFile(fileName) {
+  if (!state.selectedSite) return;
+  const file = await apiGet(`/sites/${encodeURIComponent(state.selectedSite)}/artifacts/files/${encodeURIComponent(fileName)}`);
+  els.artifactOutput.textContent = file.content;
+  writeResult("artifact file", { site: state.selectedSite, file: file.name });
 }
 
 function renderMetrics() {
@@ -1606,6 +1900,11 @@ function checked(selector) {
 
 function csv(selector) {
   return value(selector).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function selectedPermissions() {
+  const checkedPermissions = [...document.querySelectorAll("[data-permission]:checked")].map((item) => item.dataset.permission);
+  return checkedPermissions.length ? checkedPermissions : csv("#rolePermissions");
 }
 
 function formatScalar(value) {

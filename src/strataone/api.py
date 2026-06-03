@@ -1,6 +1,7 @@
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,13 @@ class ProviderConfigPayload(BaseModel):
 
 class ApprovalDecisionPayload(BaseModel):
     reason: str = ""
+
+
+class ArtifactFileRecord(BaseModel):
+    name: str
+    path: str
+    size_bytes: int
+    updated_at: str
 
 
 store = StrataStore()
@@ -529,6 +537,18 @@ def approve_request(approval_id: str, context: AuthContext = Depends(require_per
     return approval.model_dump(mode="json")
 
 
+@app.post("/approvals/{approval_id}/run")
+def approve_and_run(approval_id: str, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
+    approval = store.approve(approval_id, context.username)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    params = dict(approval.detail.get("params") or {})
+    params["approval_id"] = approval_id
+    job_id = jobs.submit(approval.site_name, approval.action, params)
+    store.add_audit(context.username, "approval.approved.run", f"approval:{approval_id}", {"job_id": job_id, "action": approval.action, "site": approval.site_name})
+    return {"approval": approval.model_dump(mode="json"), "job_id": job_id, "status": "queued"}
+
+
 @app.post("/approvals/{approval_id}/reject")
 def reject_request(approval_id: str, payload: ApprovalDecisionPayload | None = None, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
     approval = store.reject(approval_id, context.username, payload.reason if payload else "")
@@ -544,6 +564,33 @@ def generate_artifacts(site_name: str, _: Any = Depends(require_permission("gene
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
     return ArtifactGenerator().generate(spec_from_record(site)).model_dump(mode="json")
+
+
+@app.get("/sites/{site_name}/artifacts/files")
+def list_artifact_files(site_name: str, _: Any = read_sites) -> dict[str, Any]:
+    site = store.get_site(site_name)
+    if site is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    site_dir = _artifact_site_dir(site_name)
+    files = []
+    if site_dir.exists():
+        for path in sorted(site_dir.iterdir()):
+            if path.is_file():
+                stat = path.stat()
+                files.append(ArtifactFileRecord(name=path.name, path=str(path), size_bytes=stat.st_size, updated_at=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat()).model_dump(mode="json"))
+    return {"site_name": site_name, "output_dir": str(site_dir), "files": files}
+
+
+@app.get("/sites/{site_name}/artifacts/files/{file_name}")
+def get_artifact_file(site_name: str, file_name: str, _: Any = read_sites) -> dict[str, Any]:
+    if store.get_site(site_name) is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    if "/" in file_name or "\\" in file_name or file_name in {"", ".", ".."}:
+        raise HTTPException(status_code=400, detail="invalid file name")
+    path = _artifact_site_dir(site_name) / file_name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact file not found")
+    return {"site_name": site_name, "name": file_name, "content": path.read_text(encoding="utf-8")}
 
 
 @app.get("/sites/{site_name}/inventory")
@@ -616,3 +663,7 @@ def _approval_required(action: str, params: dict[str, Any]) -> bool:
 
 def _approval_safe_params(params: dict[str, Any]) -> dict[str, Any]:
     return {key: ("***" if key in {"password", "username"} else value) for key, value in params.items()}
+
+
+def _artifact_site_dir(site_name: str) -> Path:
+    return Path(os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts")) / site_name

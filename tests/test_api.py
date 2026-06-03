@@ -255,6 +255,36 @@ def test_approval_can_be_rejected() -> None:
     assert rejected.json()["detail"]["rejection_reason"] == "maintenance window closed"
 
 
+def test_approval_can_be_approved_and_run() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+
+    requested = client.post("/sites/branch-001/jobs/deploy-azure-local", json={})
+    approval_id = requested.json()["approval_id"]
+    queued = client.post(f"/approvals/{approval_id}/run")
+
+    assert requested.json()["status"] == "approval-required"
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "queued"
+    assert "job_id" in queued.json()
+
+
+def test_artifact_files_can_be_listed_and_read() -> None:
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+    client.post("/sites/branch-001/artifacts")
+
+    listing = client.get("/sites/branch-001/artifacts/files")
+    manifest = client.get("/sites/branch-001/artifacts/files/manifest.json")
+
+    assert listing.status_code == 200
+    assert any(file["name"] == "manifest.json" for file in listing.json()["files"])
+    assert manifest.status_code == 200
+    assert "branch-001" in manifest.json()["content"]
+
+
 def test_provider_api_creates_custom_provider() -> None:
     client = TestClient(app)
 
