@@ -665,18 +665,21 @@ textarea {
 }
 
 .settings-layout {
+  align-items: start;
   display: grid;
   gap: 18px;
   grid-template-columns: 240px minmax(0, 1fr);
 }
 
 .settings-nav {
+  align-self: start;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
   display: grid;
   gap: 4px;
+  height: max-content;
   padding: 10px;
 }
 
@@ -685,7 +688,9 @@ textarea {
   border: 0;
   color: var(--ink);
   justify-content: flex-start;
-  min-height: 38px;
+  min-height: 0;
+  padding: 10px 12px;
+  width: 100%;
 }
 
 .settings-tab.active,

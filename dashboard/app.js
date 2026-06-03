@@ -621,7 +621,11 @@ function renderSettingsSection(section, data) {
           <label>Username<input id="accessUsername" placeholder="j.smith" /></label>
           <label>Display Name<input id="accessDisplayName" placeholder="Jane Smith" /></label>
           <label>Email<input id="accessEmail" placeholder="jane.smith@example.com" /></label>
-          <label>Roles<input id="accessRoles" placeholder="Operator, Viewer" /></label>
+          <label>Role
+            <select id="accessRole">
+              ${roleOptions(data.roles || [])}
+            </select>
+          </label>
           <label>Status
             <select id="accessStatus">
               <option value="active">Active</option>
@@ -779,7 +783,7 @@ async function handleDocumentActions(event) {
       document.querySelector("#accessUsername").value = user.username;
       document.querySelector("#accessDisplayName").value = user.display_name;
       document.querySelector("#accessEmail").value = user.email;
-      document.querySelector("#accessRoles").value = (user.roles || []).join(", ");
+      document.querySelector("#accessRole").value = (user.roles || [])[0] || "";
       document.querySelector("#accessStatus").value = user.status;
     }
     return;
@@ -828,7 +832,7 @@ async function handleDocumentSubmit(event) {
       username: value("#accessUsername"),
       display_name: value("#accessDisplayName"),
       email: value("#accessEmail"),
-      roles: csv("#accessRoles"),
+      roles: value("#accessRole") ? [value("#accessRole")] : [],
       status: value("#accessStatus"),
     });
     writeResult("user saved", user);
@@ -849,6 +853,13 @@ async function handleDocumentSubmit(event) {
 
 function settingCard(label, value) {
   return `<div class="setting-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function roleOptions(roles) {
+  return [
+    `<option value="">Select a role</option>`,
+    ...roles.map((role) => `<option value="${escapeHtml(role.name)}">${escapeHtml(role.name)}</option>`),
+  ].join("");
 }
 
 function providerRow(provider) {
