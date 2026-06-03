@@ -12,6 +12,8 @@ const state = {
   activeStep: "intent",
 };
 
+const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
+
 const els = {
   apiStatus: document.querySelector("#apiStatus"),
   viewTitle: document.querySelector("#viewTitle"),
@@ -74,6 +76,8 @@ function wireEvents() {
     button.addEventListener("click", () => selectChoice("platform", button.dataset.platform));
   });
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
+  document.querySelector("#previousStep").addEventListener("click", previousWizardStep);
+  document.querySelector("#nextStep").addEventListener("click", nextWizardStep);
   document.querySelector("#newDeploymentTop").addEventListener("click", () => showView("deployments"));
   document.querySelector("#newDeploymentSites").addEventListener("click", () => showView("deployments"));
   document.querySelector("#loadExample").addEventListener("click", () => {
@@ -104,8 +108,11 @@ function wireEvents() {
 
 function showView(view) {
   state.activeView = view;
-  document.querySelectorAll(".view").forEach((section) => section.classList.remove("active"));
-  document.querySelector(`#view-${view}`).classList.add("active");
+  document.querySelectorAll(".view").forEach((section) => {
+    const active = section.id === `view-${view}`;
+    section.classList.toggle("active", active);
+    section.hidden = !active;
+  });
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === view);
   });
@@ -117,7 +124,29 @@ function showView(view) {
 function showWizardStep(step) {
   state.activeStep = step;
   document.querySelectorAll(".step").forEach((button) => button.classList.toggle("active", button.dataset.step === step));
-  document.querySelectorAll(".wizard-page").forEach((page) => page.classList.toggle("active", page.dataset.page === step));
+  document.querySelectorAll(".wizard-page").forEach((page) => {
+    const active = page.dataset.page === step;
+    page.classList.toggle("active", active);
+    page.hidden = !active;
+  });
+  const index = wizardSteps.indexOf(step);
+  document.querySelector("#previousStep").disabled = index === 0;
+  document.querySelector("#nextStep").textContent = index === wizardSteps.length - 1 ? "Review Ready" : "Next";
+  if (step === "review") {
+    const spec = deploymentSpecFromForm();
+    els.siteYaml.value = toYaml(spec);
+    renderDeploymentSummary(spec);
+  }
+}
+
+function previousWizardStep() {
+  const index = wizardSteps.indexOf(state.activeStep);
+  showWizardStep(wizardSteps[Math.max(0, index - 1)]);
+}
+
+function nextWizardStep() {
+  const index = wizardSteps.indexOf(state.activeStep);
+  showWizardStep(wizardSteps[Math.min(wizardSteps.length - 1, index + 1)]);
 }
 
 function selectChoice(type, value) {

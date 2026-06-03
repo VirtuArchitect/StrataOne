@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-ops2" />
   </head>
   <body>
     <div class="app-shell">
@@ -62,15 +62,15 @@
             <div class="panel span-4">
               <div class="panel-header">
                 <div>
-                  <h2>Recommended Flow</h2>
-                  <span>Next actions for a deployment</span>
+                  <h2>Operational Runbook</h2>
+                  <span>Standard deployment sequence</span>
                 </div>
               </div>
               <ol class="flow-list">
-                <li>Create deployment</li>
-                <li>Run inventory</li>
-                <li>Run preflight</li>
-                <li>Generate artifacts</li>
+                <li><strong>Create deployment</strong><span>Define site, hardware, platform, and network intent.</span></li>
+                <li><strong>Run inventory</strong><span>Collect BMC, firmware, NIC, and storage data.</span></li>
+                <li><strong>Run preflight</strong><span>Validate readiness against the latest inventory.</span></li>
+                <li><strong>Generate artifacts</strong><span>Create the Azure Local deployment bundle.</span></li>
               </ol>
             </div>
             <div class="panel span-6">
@@ -94,7 +94,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-deployments">
+        <section class="view" id="view-deployments" hidden>
           <div class="deployment-shell">
             <div class="wizard panel">
               <div class="panel-header">
@@ -129,7 +129,7 @@
                 </div>
               </div>
 
-              <div class="wizard-page" data-page="hardware">
+              <div class="wizard-page" data-page="hardware" hidden>
                 <div class="choice-grid" id="hardwareChoices">
                   <button class="choice selected" data-hardware="generic-redfish"><strong>Generic Redfish</strong><span>Vendor-neutral BMC baseline</span></button>
                   <button class="choice" data-hardware="dell-idrac"><strong>Dell iDRAC</strong><span>OEM shim with Redfish fallback</span></button>
@@ -146,7 +146,7 @@
                 </div>
               </div>
 
-              <div class="wizard-page" data-page="platform">
+              <div class="wizard-page" data-page="platform" hidden>
                 <div class="choice-grid" id="platformChoices">
                   <button class="choice selected" data-platform="azure-local"><strong>Azure Local</strong><span>Arc-connected HCI and edge platform</span></button>
                   <button class="choice" data-platform="vmware-vsphere"><strong>VMware vSphere</strong><span>vCenter and ESXi provider</span></button>
@@ -164,7 +164,7 @@
                 </div>
               </div>
 
-              <div class="wizard-page" data-page="network">
+              <div class="wizard-page" data-page="network" hidden>
                 <div class="form-grid">
                   <label>Management VLAN<input id="managementVlan" type="number" value="100" /></label>
                   <label>Storage VLAN<input id="storageVlan" type="number" value="110" /></label>
@@ -179,13 +179,18 @@
                 </div>
               </div>
 
-              <div class="wizard-page" data-page="review">
+              <div class="wizard-page" data-page="review" hidden>
                 <div class="review-actions">
                   <button id="generateDesiredState">Generate Desired State</button>
                   <button id="saveGeneratedDeployment">Save Deployment</button>
                   <button id="saveAndPlanDeployment">Save & Plan</button>
                 </div>
                 <pre class="review-summary" id="deploymentSummary"></pre>
+              </div>
+
+              <div class="wizard-footer">
+                <button class="secondary" id="previousStep">Back</button>
+                <button id="nextStep">Next</button>
               </div>
             </div>
 
@@ -202,7 +207,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-sites">
+        <section class="view" id="view-sites" hidden>
           <div class="layout-grid">
             <div class="panel span-7">
               <div class="panel-header">
@@ -273,7 +278,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-jobs">
+        <section class="view" id="view-jobs" hidden>
           <div class="panel">
             <div class="panel-header">
               <div>
@@ -285,7 +290,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-providers">
+        <section class="view" id="view-providers" hidden>
           <div class="panel">
             <div class="panel-header">
               <div>
@@ -297,7 +302,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-artifacts">
+        <section class="view" id="view-artifacts" hidden>
           <div class="layout-grid">
             <div class="panel span-5">
               <div class="panel-header">
@@ -321,7 +326,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-lifecycle">
+        <section class="view" id="view-lifecycle" hidden>
           <div class="panel">
             <div class="panel-header">
               <div>
@@ -340,6 +345,6 @@
       </main>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260603-ops2"></script>
   </body>
 </html>

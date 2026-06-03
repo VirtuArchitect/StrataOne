@@ -19,6 +19,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -48,6 +50,10 @@ button {
 }
 
 button:hover { background: var(--accent-dark); }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
 button.secondary {
   background: white;
   border-color: var(--line-strong);
@@ -194,7 +200,8 @@ tbody tr.selected { background: #e7f2f4; }
 .deployment-shell {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(560px, 1.1fr) minmax(430px, 0.9fr);
+  grid-template-columns: minmax(620px, 1fr) minmax(420px, 0.7fr);
+  align-items: start;
 }
 
 .wizard-steps {
@@ -256,7 +263,7 @@ textarea:focus {
 .choice-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 16px;
 }
 
@@ -269,6 +276,7 @@ textarea:focus {
   min-height: 78px;
   padding: 12px;
   text-align: left;
+  white-space: normal;
 }
 
 .choice strong { display: block; font-size: 14px; }
@@ -303,6 +311,14 @@ textarea:focus {
   margin: 0;
   min-height: 200px;
   padding: 14px;
+}
+
+.wizard-footer {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 13px 16px;
 }
 
 .action-grid {
@@ -351,7 +367,7 @@ textarea {
   color: var(--ink);
   font-family: Consolas, "Courier New", monospace;
   font-size: 13px;
-  height: 480px;
+  height: 430px;
   outline: none;
   padding: 14px;
   resize: vertical;
@@ -413,12 +429,24 @@ textarea {
 
 .flow-list {
   margin: 0;
-  padding: 16px 20px 18px 34px;
+  padding: 8px 16px 16px 34px;
 }
 
 .flow-list li {
   border-bottom: 1px solid var(--line);
-  padding: 10px 0;
+  padding: 12px 0;
+}
+
+.flow-list strong {
+  display: block;
+  font-size: 13px;
+}
+
+.flow-list span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 3px;
 }
 
 pre {
