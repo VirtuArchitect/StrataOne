@@ -9,6 +9,7 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 ### Added
 
 - Dashboard approval request form for protected live actions.
+- Clickable dashboard KPI tiles for sites, all jobs, successful jobs, and attention jobs.
 
 ### Fixed
 

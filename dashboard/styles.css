@@ -300,9 +300,39 @@ h2 { font-size: 16px; }
   box-shadow: var(--shadow);
 }
 
-.metric { padding: 20px; }
+.metric {
+  align-items: flex-start;
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  cursor: default;
+  display: block;
+  font: inherit;
+  justify-content: flex-start;
+  min-height: 108px;
+  padding: 20px;
+  text-align: left;
+  width: 100%;
+}
 .metric span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 10px; text-transform: uppercase; }
 .metric strong { font-size: 30px; }
+.metric.is-clickable {
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.metric.is-clickable:hover,
+.metric.is-clickable:focus-visible {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px rgba(67, 217, 173, 0.25), var(--shadow);
+  outline: none;
+  transform: translateY(-1px);
+}
+.metric:disabled {
+  opacity: 0.62;
+}
+.metric:disabled:hover {
+  background: var(--panel);
+}
 
 .view { display: none; }
 .view.active { display: block; }

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-approval1" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-metrics1" />
   </head>
   <body>
     <div class="app-shell">
@@ -65,10 +65,10 @@
         </section>
 
         <section class="metric-grid">
-          <div class="metric"><span>Sites</span><strong id="siteCount">0</strong></div>
-          <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
-          <div class="metric"><span>Successful</span><strong id="successCount">0</strong></div>
-          <div class="metric"><span>Attention</span><strong id="attentionCount">0</strong></div>
+          <button class="metric" data-metric-link="sites" disabled><span>Sites</span><strong id="siteCount">0</strong></button>
+          <button class="metric" data-metric-link="jobs" disabled><span>Jobs</span><strong id="jobCount">0</strong></button>
+          <button class="metric" data-metric-link="succeeded" disabled><span>Successful</span><strong id="successCount">0</strong></button>
+          <button class="metric" data-metric-link="failed" disabled><span>Attention</span><strong id="attentionCount">0</strong></button>
         </section>
 
         <section class="view active" id="view-overview">
@@ -358,7 +358,7 @@
               <div class="panel-header">
                 <div>
                   <h2>Job History</h2>
-                  <span>Tracked orchestration activity</span>
+                  <span id="jobsFilterLabel">Tracked orchestration activity</span>
                 </div>
               </div>
               <div class="job-list" id="jobsList"></div>
@@ -596,6 +596,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-approval1"></script>
+    <script src="./app.js?v=20260603-metrics1"></script>
   </body>
 </html>

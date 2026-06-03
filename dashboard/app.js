@@ -16,6 +16,7 @@ const state = {
   selectedDetailTab: "overview",
   eventStreamAbort: null,
   selectedSite: null,
+  jobFilter: "all",
   selectedHardware: "generic-redfish",
   selectedPlatform: "azure-local",
   authToken: localStorage.getItem("strataone.authToken") || "",
@@ -51,6 +52,7 @@ const els = {
   sitesTable: document.querySelector("#sitesTable"),
   jobsList: document.querySelector("#jobsList"),
   overviewJobs: document.querySelector("#overviewJobs"),
+  jobsFilterLabel: document.querySelector("#jobsFilterLabel"),
   approvalsList: document.querySelector("#approvalsList"),
   approvalRequestSite: document.querySelector("#approvalRequestSite"),
   approvalRequestAction: document.querySelector("#approvalRequestAction"),
@@ -197,6 +199,9 @@ function wireEvents() {
   document.querySelector("#saveSelectedYaml").addEventListener("click", () => saveSite(parseTinyYaml(els.selectedYaml.value)));
   document.querySelectorAll("[data-view-shortcut]").forEach((button) => {
     button.addEventListener("click", () => showView(button.dataset.viewShortcut));
+  });
+  document.querySelectorAll("[data-metric-link]").forEach((button) => {
+    button.addEventListener("click", () => openMetricLink(button.dataset.metricLink));
   });
   document.querySelector("#loadExample").addEventListener("click", () => {
     els.siteYaml.value = exampleYaml;
@@ -481,6 +486,7 @@ function renderSites() {
     selectSite(row.dataset.site);
   }));
   renderSelectedSite();
+  updateMetricInteractivity();
 }
 
 function selectSite(name) {
@@ -536,9 +542,14 @@ function renderFleet() {
 
 function renderJobs() {
   els.jobCount.textContent = state.jobs.length;
-  const items = state.jobs.slice(0, 40).map(jobItem).join("") || `<div class="list-item"><strong>No jobs yet</strong><span>Run an action to create a tracked job.</span></div>`;
+  const visibleJobs = filteredJobs();
+  const emptyCopy = state.jobFilter === "all"
+    ? ["No jobs yet", "Run an action to create a tracked job."]
+    : [`No ${jobFilterLabel(state.jobFilter).toLowerCase()} jobs`, "Change the dashboard filter or run a matching action."];
+  const items = visibleJobs.slice(0, 40).map(jobItem).join("") || `<div class="list-item"><strong>${emptyCopy[0]}</strong><span>${emptyCopy[1]}</span></div>`;
   els.jobsList.innerHTML = items;
   els.overviewJobs.innerHTML = state.jobs.slice(0, 6).map(jobItem).join("") || items;
+  if (els.jobsFilterLabel) els.jobsFilterLabel.textContent = state.jobFilter === "all" ? "Tracked orchestration activity" : `${jobFilterLabel(state.jobFilter)} orchestration activity`;
   document.querySelectorAll("[data-job-id]").forEach((item) => {
     item.addEventListener("click", async (event) => {
       if (event.target.closest("button")) return;
@@ -548,6 +559,18 @@ function renderJobs() {
     });
   });
   if (state.selectedJobId) refreshSelectedJobDetail();
+  updateMetricInteractivity();
+}
+
+function filteredJobs() {
+  if (state.jobFilter === "all") return state.jobs;
+  return state.jobs.filter((job) => job.status === state.jobFilter);
+}
+
+function jobFilterLabel(filter) {
+  if (filter === "succeeded") return "Successful";
+  if (filter === "failed") return "Attention";
+  return "All";
 }
 
 function jobItem(job) {
@@ -1480,6 +1503,36 @@ async function openArtifactFile(fileName) {
 function renderMetrics() {
   els.successCount.textContent = state.jobs.filter((job) => job.status === "succeeded").length;
   els.attentionCount.textContent = state.jobs.filter((job) => job.status === "failed").length;
+  updateMetricInteractivity();
+}
+
+function updateMetricInteractivity() {
+  const counts = {
+    sites: state.sites.length,
+    jobs: state.jobs.length,
+    succeeded: state.jobs.filter((job) => job.status === "succeeded").length,
+    failed: state.jobs.filter((job) => job.status === "failed").length,
+  };
+  document.querySelectorAll("[data-metric-link]").forEach((button) => {
+    const count = counts[button.dataset.metricLink] || 0;
+    button.disabled = count === 0;
+    button.classList.toggle("is-clickable", count > 0);
+    button.setAttribute("aria-label", count > 0 ? `Open ${button.dataset.metricLink}` : `${button.dataset.metricLink} unavailable`);
+  });
+}
+
+function openMetricLink(metric) {
+  if (metric === "sites") {
+    if (!state.sites.length) return;
+    showView("sites");
+    return;
+  }
+  const filter = metric === "jobs" ? "all" : metric;
+  const hasMatches = filter === "all" ? state.jobs.length : state.jobs.some((job) => job.status === filter);
+  if (!hasMatches) return;
+  state.jobFilter = filter;
+  renderJobs();
+  showView("jobs");
 }
 
 function deploymentSpecFromForm() {
