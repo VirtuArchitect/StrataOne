@@ -936,7 +936,7 @@ function renderProviders() {
   els.providerList.innerHTML = state.providers.map((provider) => `
     <div class="list-item provider-card">
       <div>
-        <strong>${escapeHtml(provider.name)} <span class="badge">${provider.vendor_supported ? "vendor supported" : "community"}</span></strong>
+        <strong class="provider-title">${providerNameMarkup(provider)} <span class="badge">${provider.vendor_supported ? "vendor supported" : "community"}</span></strong>
         <span>${escapeHtml(provider.type)} - ${escapeHtml(provider.source)}</span>
         <span>${escapeHtml(provider.description)}</span>
       </div>
@@ -1038,7 +1038,7 @@ function renderProviderMatrix() {
       <div class="matrix-row matrix-head"><span>Provider</span>${capabilities.map((capability) => `<span>${escapeHtml(capability)}</span>`).join("")}</div>
       ${state.providers.map((provider) => `
         <div class="matrix-row">
-          <span>${escapeHtml(provider.name)}</span>
+          <span>${providerNameMarkup(provider)}</span>
           ${capabilities.map((capability) => `<span class="${providerCapability(provider, capability) ? "status-succeeded" : "status-running"}">${providerCapability(provider, capability) ? "Yes" : "Planned"}</span>`).join("")}
         </div>
       `).join("")}
@@ -1682,8 +1682,10 @@ function roleOptions(roles) {
 function providerRow(provider) {
   return `
     <div class="settings-row">
-      <strong>${escapeHtml(provider.name)}</strong>
-      <span>${escapeHtml(provider.description)} - ${escapeHtml(provider.source)}</span>
+      <div>
+        <strong class="provider-title">${providerNameMarkup(provider)}</strong>
+        <span>${escapeHtml(provider.description)} - ${escapeHtml(provider.source)}</span>
+      </div>
     </div>
   `;
 }
@@ -1693,7 +1695,7 @@ async function showProviderDetail(providerName) {
   const form = document.querySelector("#providerConfigForm");
   form.hidden = false;
   form.dataset.providerName = providerName;
-  document.querySelector("#providerConfigTitle").textContent = `${providerName} Details`;
+  document.querySelector("#providerConfigTitle").innerHTML = `${providerNameMarkup(detail.provider)} Details`;
   document.querySelector("#providerDetailGrid").innerHTML = `
     ${settingCard("Type", detail.provider.type)}
     ${settingCard("Source", detail.provider.source)}
@@ -1707,6 +1709,32 @@ async function showProviderDetail(providerName) {
     form.querySelector("[data-test-provider]").dataset.testProvider = providerName;
   }
   form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function providerNameMarkup(provider) {
+  const identity = providerIdentity(typeof provider === "string" ? provider : provider.name);
+  return `<span class="provider-name"><span class="vendor-mark ${escapeHtml(identity.className)}">${escapeHtml(identity.mark)}</span><span>${escapeHtml(identity.label)}</span></span>`;
+}
+
+function providerIdentity(name) {
+  const normalized = String(name || "").toLowerCase();
+  const known = {
+    "generic-redfish": ["RF", "Generic Redfish", "vendor-redfish"],
+    "dell-idrac": ["D", "Dell iDRAC", "vendor-dell"],
+    "hpe-ilo": ["HPE", "HPE iLO", "vendor-hpe"],
+    "lenovo-xclarity": ["L", "Lenovo XClarity", "vendor-lenovo"],
+    "supermicro-redfish": ["SM", "Supermicro Redfish", "vendor-supermicro"],
+    "cisco-intersight": ["C", "Cisco Intersight", "vendor-cisco"],
+    "azure-local": ["AZ", "Azure Local", "vendor-azure"],
+    "hyper-v": ["HV", "Hyper-V", "vendor-hyperv"],
+    "kvm": ["KVM", "KVM", "vendor-kvm"],
+    "nutanix-ahv": ["N", "Nutanix AHV", "vendor-nutanix"],
+    "openshift-virtualization": ["OS", "OpenShift Virtualization", "vendor-openshift"],
+    "proxmox": ["PX", "Proxmox", "vendor-proxmox"],
+    "vmware-vsphere": ["VM", "VMware vSphere", "vendor-vmware"],
+  };
+  const [mark, label, className] = known[normalized] || [normalized.slice(0, 2).toUpperCase() || "PR", name, "vendor-generic"];
+  return { mark, label, className };
 }
 
 function formatSettingValue(value) {

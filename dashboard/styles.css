@@ -794,6 +794,51 @@ textarea {
 
 .job-main:hover { background: transparent; }
 
+.provider-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.provider-name {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vendor-mark {
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  color: #ffffff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 800;
+  height: 24px;
+  justify-content: center;
+  letter-spacing: 0;
+  line-height: 1;
+  min-width: 24px;
+  padding: 0 5px;
+}
+
+.vendor-redfish { background: #405c68; }
+.vendor-dell { background: #0875be; }
+.vendor-hpe { background: #008767; }
+.vendor-lenovo { background: #b91c35; }
+.vendor-supermicro { background: #2f5f9f; }
+.vendor-cisco { background: #1f8cc6; }
+.vendor-azure { background: #2563eb; }
+.vendor-hyperv { background: #355c9a; }
+.vendor-kvm { background: #5b556d; }
+.vendor-nutanix { background: #1f7a63; }
+.vendor-openshift { background: #c7392f; }
+.vendor-proxmox { background: #d05a22; }
+.vendor-vmware { background: #6b7280; }
+.vendor-generic { background: #4a4567; }
+
 .job-item:hover,
 .fleet-card:hover { background: #25213b; }
 
