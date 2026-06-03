@@ -525,18 +525,21 @@ class StrataStore:
             if existing is None or existing.built_in:
                 self.upsert_role(role)
 
-        if self.get_user("admin") is None:
+        admin = self.get_user("admin")
+        if admin is None:
             self.upsert_user(
                 UserRecord(
                     username="admin",
                     display_name="Platform Administrator",
                     email="admin@strataone.local",
-                    roles=["Platform Admin", "Deployment Admin"],
+                    roles=["Platform Admin", "Deployment Admin", "Operator"],
                     status="active",
                     created_at=_now(),
                     updated_at=_now(),
                 )
             )
+        elif "Operator" not in admin.roles:
+            self.upsert_user(admin.model_copy(update={"roles": [*admin.roles, "Operator"]}))
 
     def list_roles(self) -> list[RoleRecord]:
         with self._connect() as conn:
