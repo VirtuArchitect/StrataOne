@@ -52,6 +52,8 @@ const els = {
   jobsList: document.querySelector("#jobsList"),
   overviewJobs: document.querySelector("#overviewJobs"),
   approvalsList: document.querySelector("#approvalsList"),
+  approvalRequestSite: document.querySelector("#approvalRequestSite"),
+  approvalRequestAction: document.querySelector("#approvalRequestAction"),
   jobDetail: document.querySelector("#jobDetail"),
   jobDetailSubtitle: document.querySelector("#jobDetailSubtitle"),
   providerList: document.querySelector("#providerList"),
@@ -317,6 +319,7 @@ async function loadSites() {
   state.sites = data.sites || [];
   if (!state.selectedSite && state.sites.length) state.selectedSite = state.sites[0].name;
   renderSites();
+  renderApprovalRequestOptions();
   renderFleet();
   await loadInventory();
   renderMetrics();
@@ -933,6 +936,7 @@ function providerCapability(provider, capability) {
 
 function renderApprovals() {
   if (!els.approvalsList) return;
+  renderApprovalRequestOptions();
   els.approvalsList.innerHTML = state.approvals.map((approval) => `
     <div class="list-item approval-card">
       <div>
@@ -949,6 +953,13 @@ function renderApprovals() {
       </div>
     </div>
   `).join("") || `<div class="list-item"><strong>No pending approvals</strong><span>Live actions that require approval will appear here.</span></div>`;
+}
+
+function renderApprovalRequestOptions() {
+  if (!els.approvalRequestSite) return;
+  els.approvalRequestSite.innerHTML = state.sites.map((site) => `
+    <option value="${escapeHtml(site.name)}" ${site.name === state.selectedSite ? "selected" : ""}>${escapeHtml(site.name)}</option>
+  `).join("") || `<option value="">No sites available</option>`;
 }
 
 function renderNodeEditor() {
@@ -1371,6 +1382,18 @@ async function handleDocumentSubmit(event) {
     const user = await apiPost("/access/users", payload);
     writeResult("user saved", user);
     await loadSettings();
+    return;
+  }
+  if (event.target.id === "approvalRequestForm") {
+    event.preventDefault();
+    const siteName = value("#approvalRequestSite");
+    const action = value("#approvalRequestAction");
+    if (!siteName || !action) {
+      writeResult("approval request failed", { error: "site and action are required" });
+      return;
+    }
+    await runJob(action, siteName);
+    await loadApprovals();
     return;
   }
   if (event.target.id === "authLoginForm") {

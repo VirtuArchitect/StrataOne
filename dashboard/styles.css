@@ -318,6 +318,7 @@ h2 { font-size: 16px; }
 .span-6 { grid-column: span 6; }
 .span-7 { grid-column: span 7; }
 .span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
 
 .panel { overflow: hidden; }
 .panel-header { border-bottom: 1px solid var(--line); min-height: 58px; padding: 13px 15px; }
@@ -396,6 +397,13 @@ tbody tr.selected { background: #27294f; }
 }
 
 .span-form { grid-column: 1 / -1; }
+
+.form-help {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+}
 
 .node-editor {
   display: grid;
@@ -946,6 +954,11 @@ textarea {
   border-width: 0 0 1px;
 }
 
+.approval-request-form {
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+
 .provider-matrix {
   border-bottom: 1px solid var(--line);
   padding: 14px;
@@ -1125,5 +1138,5 @@ pre {
   .rbac-grid { grid-template-columns: 1fr; }
   .node-row { grid-template-columns: 1fr; }
   .readiness-banner { align-items: flex-start; flex-direction: column; gap: 14px; }
-  .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: 1 / -1; }
+  .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: 1 / -1; }
 }

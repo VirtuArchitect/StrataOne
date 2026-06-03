@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-about1" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-approval1" />
   </head>
   <body>
     <div class="app-shell">
@@ -397,6 +397,23 @@
                   <span>Live actions are blocked until approved</span>
                 </div>
               </div>
+              <form class="settings-form approval-request-form" id="approvalRequestForm">
+                <h3>Request Approval</h3>
+                <div class="form-grid">
+                  <label>Site
+                    <select id="approvalRequestSite"></select>
+                  </label>
+                  <label>Action
+                    <select id="approvalRequestAction">
+                      <option value="deploy-azure-local">Deploy Azure Local</option>
+                      <option value="node-replacement">Node Replacement</option>
+                      <option value="mount-iso">Mount ISO</option>
+                    </select>
+                  </label>
+                </div>
+                <span class="form-help">Approvals are also generated automatically when protected deployment actions are launched.</span>
+                <button type="submit">Request Approval</button>
+              </form>
               <ol class="flow-list">
                 <li><strong>Request</strong><span>Live or high-impact actions create a pending approval.</span></li>
                 <li><strong>Review</strong><span>Operators inspect site, action, parameters, and audit context.</span></li>
@@ -579,6 +596,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-about1"></script>
+    <script src="./app.js?v=20260603-approval1"></script>
   </body>
 </html>

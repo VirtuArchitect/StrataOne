@@ -4,6 +4,16 @@ All notable changes to StrataOne are documented in this file.
 
 The format follows the spirit of Keep a Changelog, and this project currently uses preview-versioned releases.
 
+## [Unreleased]
+
+### Added
+
+- Dashboard approval request form for protected live actions.
+
+### Fixed
+
+- About page release notes now span the full content width.
+
 ## [0.1.0-preview] - 2026-06-03
 
 ### Added
@@ -54,4 +64,3 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 ### Testing
 
 - Added API tests for password login, logout/session revoke, RBAC, provider configuration, provider testing, approvals, approve-and-run, artifact listing/readback, queue behavior, Redfish inventory, secrets, validation, and job execution.
-
