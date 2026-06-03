@@ -10,6 +10,7 @@ const state = {
   artifacts: [],
   audit: [],
   sessions: [],
+  discovery: [],
   settings: null,
   inventory: null,
   selectedJobId: null,
@@ -72,6 +73,7 @@ const els = {
   deploymentDetailSubtitle: document.querySelector("#deploymentDetailSubtitle"),
   deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
   providerMatrix: document.querySelector("#providerMatrix"),
+  discoveryList: document.querySelector("#discoveryList"),
   aboutGrid: document.querySelector("#aboutGrid"),
   settingsTitle: document.querySelector("#settingsTitle"),
   settingsSubtitle: document.querySelector("#settingsSubtitle"),
@@ -93,6 +95,8 @@ const els = {
   bmcTimeout: document.querySelector("#bmcTimeout"),
   isoUrl: document.querySelector("#isoUrl"),
   isoBootOnce: document.querySelector("#isoBootOnce"),
+  discoveryProvider: document.querySelector("#discoveryProvider"),
+  discoveryCredential: document.querySelector("#discoveryCredential"),
   authModal: document.querySelector("#authModal"),
   loginUsername: document.querySelector("#loginUsername"),
   loginPassword: document.querySelector("#loginPassword"),
@@ -181,6 +185,7 @@ function wireEvents() {
   document.querySelector("#refreshAll").addEventListener("click", refreshAll);
   document.querySelector("#refreshApprovals").addEventListener("click", loadApprovals);
   document.querySelector("#refreshJobDetail").addEventListener("click", refreshSelectedJobDetail);
+  document.querySelector("#refreshDiscovery").addEventListener("click", loadDiscovery);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
   document.querySelector("#logoutButton").addEventListener("click", toggleAuthSession);
@@ -297,7 +302,7 @@ function selectChoice(type, value) {
 async function refreshAll() {
   await checkApi();
   try {
-    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings()]);
+    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings(), loadDiscovery()]);
   } catch (error) {
     if (isAuthError(error)) {
       renderAuthRequired();
@@ -349,6 +354,7 @@ async function loadProviders() {
   const data = await apiGet("/providers");
   state.providers = data.providers || [];
   renderProviders();
+  renderDiscoveryOptions();
 }
 
 async function loadApprovals() {
@@ -371,6 +377,7 @@ async function loadSettings() {
   try {
     const [settings] = await Promise.all([apiGet("/settings"), loadAudit(), loadSessions()]);
     state.settings = settings;
+    renderDiscoveryOptions();
     showSettingsSection(activeSettingsSection());
   } catch (error) {
     if (isAuthError(error)) {
@@ -382,6 +389,17 @@ async function loadSettings() {
     if (els.settingsContent) {
       els.settingsContent.innerHTML = `<div class="settings-empty">Settings unavailable: ${escapeHtml(error.message)}</div>`;
     }
+  }
+}
+
+async function loadDiscovery() {
+  try {
+    const data = await apiGet("/discovery");
+    state.discovery = data.runs || [];
+    renderDiscovery();
+  } catch {
+    state.discovery = [];
+    renderDiscovery();
   }
 }
 
@@ -914,6 +932,35 @@ function renderProviders() {
   `).join("");
 }
 
+function renderDiscoveryOptions() {
+  if (els.discoveryProvider) {
+    const hardware = state.providers.filter((provider) => provider.type === "hardware");
+    els.discoveryProvider.innerHTML = hardware.map((provider) => `<option value="${escapeHtml(provider.name)}">${escapeHtml(provider.name)}</option>`).join("");
+  }
+  if (els.discoveryCredential) {
+    const refs = state.settings?.secrets?.refs || [];
+    els.discoveryCredential.innerHTML = [
+      `<option value="">No credential reference</option>`,
+      ...refs.map((secret) => `<option value="${escapeHtml(secret.name)}">${escapeHtml(secret.name)} (${escapeHtml(secret.provider)})</option>`),
+    ].join("");
+  }
+}
+
+function renderDiscovery() {
+  renderDiscoveryOptions();
+  if (!els.discoveryList) return;
+  els.discoveryList.innerHTML = state.discovery.map((run) => `
+    <div class="settings-row">
+      <div>
+        <strong>${escapeHtml(run.name)} <span class="badge">${escapeHtml(run.status)}</span></strong>
+        <span>${escapeHtml(run.cidr)} - ${escapeHtml(run.provider)} - ${formatDate(run.created_at)}</span>
+        <span>${escapeHtml(run.result?.candidate_count || 0)} candidate BMC addresses planned</span>
+      </div>
+      <button class="mini secondary" data-show-discovery="${escapeHtml(run.id)}">Inspect</button>
+    </div>
+  `).join("") || `<div class="settings-empty">No discovery plans yet.</div>`;
+}
+
 function renderAbout() {
   if (!els.aboutGrid) return;
   els.aboutGrid.innerHTML = `
@@ -1157,6 +1204,63 @@ function renderSettingsSection(section, data) {
       <div class="settings-list">${(data.platform || []).map(providerRow).join("")}</div>
     `;
   }
+  if (section === "secrets") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("Vault Provider", data.vault_provider)}
+        ${settingCard("Vault File", data.vault_file_configured ? "configured" : "not configured")}
+        ${settingCard("HashiCorp Vault", data.hashicorp_vault_configured ? "configured" : "not configured")}
+      </div>
+      <form class="settings-form" id="secretRefForm">
+        <h3>Create / Edit Secret Reference</h3>
+        <div class="form-grid">
+          <label>Name<input id="secretName" placeholder="branch-bmc" /></label>
+          <label>Type
+            <select id="secretType">
+              <option value="bmc">BMC credentials</option>
+              <option value="azure">Azure credentials</option>
+              <option value="provider">Provider token</option>
+              <option value="generic">Generic secret</option>
+            </select>
+          </label>
+          <label>Provider
+            <select id="secretProvider">
+              <option value="env">Environment</option>
+              <option value="file">File vault</option>
+              <option value="vault">HashiCorp Vault</option>
+            </select>
+          </label>
+          <label>Reference<input id="secretReference" placeholder="STRATAONE_BMC_PASSWORD or secret/data/branch/bmc" /></label>
+        </div>
+        <span class="form-help">Secret values are not displayed in the dashboard. Store only the external reference used by workers.</span>
+        <button type="submit">Save Secret Reference</button>
+      </form>
+      <h3>Secret References</h3>
+      <div class="settings-list">
+        ${(data.refs || []).map((secret) => `
+          <div class="settings-row">
+            <div>
+              <strong>${escapeHtml(secret.name)} <span class="badge">${escapeHtml(secret.type)}</span></strong>
+              <span>${escapeHtml(secret.provider)} - ${escapeHtml(secret.reference)}</span>
+              <span>Updated ${formatDate(secret.updated_at)}</span>
+            </div>
+            <button class="mini danger" data-delete-secret="${escapeHtml(secret.name)}">Delete</button>
+          </div>
+        `).join("") || `<div class="settings-empty">No secret references configured.</div>`}
+      </div>
+    `;
+  }
+  if (section === "api") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("CORS", data.cors)}
+        ${settingCard("Docs", data.docs)}
+        ${settingCard("Health", data.health)}
+        ${settingCard("Session Timeout", `${data.session_timeout_minutes} minutes`)}
+        ${settingCard("Approval Actions", (data.approval_required_actions || []).join(", ") || "none")}
+      </div>
+    `;
+  }
   if (section === "audit") {
     return `
       <div class="settings-grid">
@@ -1280,6 +1384,19 @@ async function handleDocumentActions(event) {
     await loadSettings();
     return;
   }
+  const deleteSecret = event.target.closest("[data-delete-secret]");
+  if (deleteSecret) {
+    const result = await apiDelete(`/secrets/${encodeURIComponent(deleteSecret.dataset.deleteSecret)}`);
+    writeResult("secret reference deleted", result);
+    await loadSettings();
+    return;
+  }
+  const showDiscovery = event.target.closest("[data-show-discovery]");
+  if (showDiscovery) {
+    const run = state.discovery.find((item) => item.id === showDiscovery.dataset.showDiscovery);
+    writeResult("discovery plan", run || {});
+    return;
+  }
   const editSite = event.target.closest("[data-edit-site]");
   if (editSite) {
     state.selectedSite = editSite.dataset.editSite;
@@ -1381,6 +1498,31 @@ async function handleDocumentSubmit(event) {
     writeResult("provider config saved", saved);
     return;
   }
+  if (event.target.id === "secretRefForm") {
+    event.preventDefault();
+    const saved = await apiPost("/secrets", {
+      name: value("#secretName"),
+      type: value("#secretType"),
+      provider: value("#secretProvider"),
+      reference: value("#secretReference"),
+      metadata: {},
+    });
+    writeResult("secret reference saved", saved);
+    await loadSettings();
+    return;
+  }
+  if (event.target.id === "discoveryForm") {
+    event.preventDefault();
+    const planned = await apiPost("/discovery", {
+      name: value("#discoveryName"),
+      cidr: value("#discoveryCidr"),
+      provider: value("#discoveryProvider"),
+      credential_ref: value("#discoveryCredential") || null,
+    });
+    writeResult("discovery planned", planned);
+    await loadDiscovery();
+    return;
+  }
   if (event.target.id === "roleForm") {
     event.preventDefault();
     const role = await apiPost("/access/roles", {
@@ -1468,7 +1610,7 @@ async function showProviderDetail(providerName) {
     ${settingCard("Support", detail.provider.vendor_supported ? "vendor supported" : "community")}
     ${settingCard("Config", detail.config ? "configured" : "not configured")}
   `;
-  document.querySelector("#providerConfigJson").value = JSON.stringify(detail.config?.config || {}, null, 2);
+  document.querySelector("#providerConfigJson").value = JSON.stringify(detail.config?.config || detail.template || {}, null, 2);
   if (!form.querySelector("[data-test-provider]")) {
     form.querySelector(".button-row").insertAdjacentHTML("afterbegin", `<button class="secondary" type="button" data-test-provider="${escapeHtml(providerName)}">Test Provider</button>`);
   } else {

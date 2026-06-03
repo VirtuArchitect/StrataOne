@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
-    <link rel="stylesheet" href="./styles.css?v=20260603-navicons1" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-phase2a" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -350,6 +350,28 @@
               </div>
               <textarea id="selectedYaml" spellcheck="false"></textarea>
             </div>
+
+            <div class="panel span-12">
+              <div class="panel-header">
+                <div>
+                  <h2>Discovery Planner</h2>
+                  <span>Plan BMC discovery before importing nodes into a deployment</span>
+                </div>
+              </div>
+              <form class="settings-form discovery-form" id="discoveryForm">
+                <div class="form-grid">
+                  <label>Name<input id="discoveryName" value="Branch BMC discovery" /></label>
+                  <label>CIDR<input id="discoveryCidr" placeholder="10.10.1.0/27" /></label>
+                  <label>Hardware Provider<select id="discoveryProvider"></select></label>
+                  <label>Credential Ref<select id="discoveryCredential"></select></label>
+                </div>
+                <div class="button-row">
+                  <button type="submit">Plan Discovery</button>
+                  <button class="secondary" type="button" id="refreshDiscovery">Refresh</button>
+                </div>
+              </form>
+              <div class="settings-list" id="discoveryList"></div>
+            </div>
           </div>
         </section>
 
@@ -628,6 +650,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260603-navicons1"></script>
+    <script src="./app.js?v=20260603-phase2a"></script>
   </body>
 </html>

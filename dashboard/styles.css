@@ -1022,6 +1022,11 @@ textarea {
   border-width: 0 0 1px;
 }
 
+.discovery-form {
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+
 .provider-matrix {
   border-bottom: 1px solid var(--line);
   padding: 14px;

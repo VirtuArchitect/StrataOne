@@ -99,6 +99,27 @@ class ProviderConfigRecord(BaseModel):
     updated_at: str
 
 
+class SecretRefRecord(BaseModel):
+    name: str
+    type: str
+    provider: str
+    reference: str
+    metadata: dict[str, Any] = {}
+    created_at: str
+    updated_at: str
+
+
+class DiscoveryRunRecord(BaseModel):
+    id: str
+    name: str
+    cidr: str
+    provider: str
+    status: str
+    result: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
 class SessionRecord(BaseModel):
     token_hash: str
     username: str
@@ -286,6 +307,33 @@ class StrataStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS secret_refs (
+                    name TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    reference TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS discovery_runs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    cidr TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version TEXT PRIMARY KEY,
                     applied_at TEXT NOT NULL
@@ -304,6 +352,7 @@ class StrataStore:
         migrations = [
             ("001_core_state", "Core site, job, inventory, access, and session tables"),
             ("002_audit_approval_events", "Audit log, approval gates, job events, and provider configs"),
+            ("003_secrets_discovery", "Secret references and discovery run history"),
         ]
         applied = {item.version for item in self.list_migrations()}
         with self._connect() as conn:
@@ -757,6 +806,64 @@ class StrataStore:
             row = conn.execute("SELECT * FROM provider_configs WHERE provider_name = ?", (provider_name,)).fetchone()
         return self._provider_config_from_row(row) if row else None
 
+    def upsert_secret_ref(self, name: str, secret_type: str, provider: str, reference: str, metadata: dict[str, Any] | None = None) -> SecretRefRecord:
+        now = _now()
+        existing = self.get_secret_ref(name)
+        created_at = existing.created_at if existing else now
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO secret_refs (name, type, provider, reference, metadata_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    type=excluded.type,
+                    provider=excluded.provider,
+                    reference=excluded.reference,
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                (name, secret_type, provider, reference, json.dumps(metadata or {}), created_at, now),
+            )
+        return self.get_secret_ref(name)  # type: ignore[return-value]
+
+    def get_secret_ref(self, name: str) -> SecretRefRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM secret_refs WHERE name = ?", (name,)).fetchone()
+        return self._secret_ref_from_row(row) if row else None
+
+    def list_secret_refs(self) -> list[SecretRefRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM secret_refs ORDER BY type, name").fetchall()
+        return [self._secret_ref_from_row(row) for row in rows]
+
+    def delete_secret_ref(self, name: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute("DELETE FROM secret_refs WHERE name = ?", (name,))
+        return result.rowcount > 0
+
+    def create_discovery_run(self, name: str, cidr: str, provider: str, result: dict[str, Any], status: str = "planned") -> DiscoveryRunRecord:
+        run_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO discovery_runs (id, name, cidr, provider, status, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, name, cidr, provider, status, json.dumps(result), now, now),
+            )
+        return self.get_discovery_run(run_id)  # type: ignore[return-value]
+
+    def get_discovery_run(self, run_id: str) -> DiscoveryRunRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM discovery_runs WHERE id = ?", (run_id,)).fetchone()
+        return self._discovery_run_from_row(row) if row else None
+
+    def list_discovery_runs(self) -> list[DiscoveryRunRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC").fetchall()
+        return [self._discovery_run_from_row(row) for row in rows]
+
     def _site_from_row(self, row: sqlite3.Row) -> SiteRecord:
         return SiteRecord(
             name=row["name"],
@@ -855,6 +962,29 @@ class StrataStore:
         return ProviderConfigRecord(
             provider_name=row["provider_name"],
             config=json.loads(row["config_json"]),
+            updated_at=row["updated_at"],
+        )
+
+    def _secret_ref_from_row(self, row) -> SecretRefRecord:
+        return SecretRefRecord(
+            name=row["name"],
+            type=row["type"],
+            provider=row["provider"],
+            reference=row["reference"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _discovery_run_from_row(self, row) -> DiscoveryRunRecord:
+        return DiscoveryRunRecord(
+            id=row["id"],
+            name=row["name"],
+            cidr=row["cidr"],
+            provider=row["provider"],
+            status=row["status"],
+            result=json.loads(row["result_json"]),
+            created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
 

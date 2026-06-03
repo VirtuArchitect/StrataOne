@@ -11,6 +11,8 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 - Dashboard approval request form for protected live actions.
 - Clickable dashboard KPI tiles for sites, all jobs, successful jobs, and attention jobs.
 - Sidebar navigation icons for primary dashboard sections.
+- Secret reference registry and BMC discovery planner.
+- Provider detail configuration templates for faster provider onboarding.
 
 ### Fixed
 

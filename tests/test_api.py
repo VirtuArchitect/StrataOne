@@ -237,6 +237,50 @@ def test_provider_test_endpoint_reports_configuration_state() -> None:
     assert any(check["name"] == "provider_registered" for check in response.json()["checks"])
 
 
+def test_secret_reference_registry_round_trips() -> None:
+    client = TestClient(app)
+
+    saved = client.post(
+        "/secrets",
+        json={
+            "name": "branch-bmc",
+            "type": "bmc",
+            "provider": "file",
+            "reference": "secret://branch/bmc",
+            "metadata": {"rotation": "quarterly"},
+        },
+    )
+    listed = client.get("/secrets")
+
+    assert saved.status_code == 200
+    assert saved.json()["name"] == "branch-bmc"
+    assert any(secret["name"] == "branch-bmc" for secret in listed.json()["secrets"])
+
+
+def test_discovery_planner_returns_bounded_candidates() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/discovery",
+        json={"name": "Lab scan", "cidr": "10.0.0.0/29", "provider": "generic-redfish", "credential_ref": "branch-bmc"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "planned"
+    assert payload["result"]["candidate_count"] == 6
+    assert payload["result"]["candidates"][0]["status"] == "pending-scan"
+
+
+def test_provider_detail_includes_configuration_template() -> None:
+    client = TestClient(app)
+
+    response = client.get("/providers/azure-local")
+
+    assert response.status_code == 200
+    assert response.json()["template"]["credential_ref"] == "azure-local-spn"
+
+
 def test_approval_can_be_rejected() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()

@@ -1,5 +1,6 @@
 import os
 import time
+from ipaddress import ip_network
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,6 +72,21 @@ class ProviderConfigPayload(BaseModel):
     config: dict[str, Any]
 
 
+class SecretRefPayload(BaseModel):
+    name: str
+    type: str = "bmc"
+    provider: str = "file"
+    reference: str
+    metadata: dict[str, Any] = {}
+
+
+class DiscoveryPayload(BaseModel):
+    name: str = "BMC discovery"
+    cidr: str
+    provider: str = "generic-redfish"
+    credential_ref: str | None = None
+
+
 class ApprovalDecisionPayload(BaseModel):
     reason: str = ""
 
@@ -126,6 +142,7 @@ write_inventory = Depends(require_permission("write-inventory", store))
 read_providers = Depends(require_permission("read-providers", store))
 manage_providers = Depends(require_permission("manage-providers", store))
 read_settings = Depends(require_permission("read-settings", store))
+manage_settings = Depends(require_permission("manage-settings", store))
 manage_access = Depends(require_permission("manage-access", store))
 read_audit = Depends(require_permission("read-audit", store))
 worker_execute = Depends(require_permission("worker-execute", store))
@@ -269,7 +286,11 @@ def provider_detail(provider_name: str, _: Any = read_providers) -> dict[str, An
     if provider is None:
         raise HTTPException(status_code=404, detail="provider not found")
     config = store.get_provider_config(provider_name)
-    return {"provider": provider.model_dump(mode="json"), "config": config.model_dump(mode="json") if config else None}
+    return {
+        "provider": provider.model_dump(mode="json"),
+        "config": config.model_dump(mode="json") if config else None,
+        "template": _provider_config_template(provider.name, provider.type),
+    }
 
 
 @app.post("/providers/{provider_name}/config")
@@ -327,6 +348,7 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "vault_provider": os.getenv("STRATAONE_VAULT_PROVIDER", "env"),
             "vault_file_configured": bool(os.getenv("STRATAONE_VAULT_FILE")),
             "hashicorp_vault_configured": bool(os.getenv("STRATAONE_VAULT_ADDR")),
+            "refs": [item.model_dump(mode="json") for item in store.list_secret_refs()],
         },
         "database": {
             "mode": store.backend,
@@ -340,12 +362,14 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "plugin_dir": os.getenv("STRATAONE_PLUGIN_DIR", "plugins"),
             "hardware": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "hardware"],
             "platform": [provider.model_dump(mode="json") for provider in provider_list if provider.type == "platform"],
+            "configured": [item.provider_name for item in [store.get_provider_config(provider.name) for provider in provider_list] if item],
         },
         "api": {
             "cors": os.getenv("STRATAONE_CORS_ORIGINS", "http://localhost:8088,http://127.0.0.1:8088"),
             "docs": "/docs",
             "health": "/health",
             "session_timeout_minutes": int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60")),
+            "approval_required_actions": sorted(_approval_required_actions()),
         },
         "artifacts": {
             "output_dir": os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts"),
@@ -358,10 +382,67 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "configuration_change_tracking": "enabled",
         },
         "validation": validation_summary(),
+        "discovery": {
+            "runs": [item.model_dump(mode="json") for item in store.list_discovery_runs()],
+            "max_candidates": int(os.getenv("STRATAONE_DISCOVERY_MAX_CANDIDATES", "32")),
+        },
         "migrations": {
             "applied": [item.model_dump(mode="json") for item in store.list_migrations()],
         },
     }
+
+
+@app.get("/secrets")
+def list_secret_refs(_: Any = read_settings) -> dict[str, Any]:
+    return {"secrets": [item.model_dump(mode="json") for item in store.list_secret_refs()]}
+
+
+@app.post("/secrets")
+def save_secret_ref(payload: SecretRefPayload, context: AuthContext = manage_settings) -> dict[str, Any]:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="secret name is required")
+    if payload.provider not in {"env", "file", "vault", "hashicorp-vault"}:
+        raise HTTPException(status_code=422, detail="secret provider must be env, file, vault, or hashicorp-vault")
+    record = store.upsert_secret_ref(name, payload.type.strip() or "generic", payload.provider, payload.reference.strip(), payload.metadata)
+    store.add_audit(context.username, "secret.ref.upsert", f"secret:{name}", _redact_secret(record.model_dump(mode="json")))
+    return record.model_dump(mode="json")
+
+
+@app.delete("/secrets/{secret_name}")
+def delete_secret_ref(secret_name: str, context: AuthContext = manage_settings) -> dict[str, bool]:
+    deleted = store.delete_secret_ref(secret_name)
+    store.add_audit(context.username, "secret.ref.delete", f"secret:{secret_name}", {"deleted": deleted})
+    return {"deleted": deleted}
+
+
+@app.get("/discovery")
+def list_discovery(_: Any = read_sites) -> dict[str, Any]:
+    return {"runs": [item.model_dump(mode="json") for item in store.list_discovery_runs()]}
+
+
+@app.post("/discovery")
+def create_discovery(payload: DiscoveryPayload, context: AuthContext = Depends(require_permission("run-inventory", store))) -> dict[str, Any]:
+    provider = next((item for item in list_providers() if item.name == payload.provider), None)
+    if provider is None or provider.type != "hardware":
+        raise HTTPException(status_code=422, detail="discovery provider must be a known hardware provider")
+    try:
+        network = ip_network(payload.cidr, strict=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="cidr must be a valid IP network") from exc
+    max_candidates = int(os.getenv("STRATAONE_DISCOVERY_MAX_CANDIDATES", "32"))
+    candidates = [str(address) for index, address in enumerate(network.hosts()) if index < max_candidates]
+    result = {
+        "mode": "planned",
+        "provider": provider.name,
+        "credential_ref": payload.credential_ref,
+        "candidate_count": len(candidates),
+        "candidates": [{"bmc_ip": address, "status": "pending-scan"} for address in candidates],
+        "next_actions": ["Run Redfish reachability scan", "Classify reachable systems", "Import selected nodes into a deployment"],
+    }
+    record = store.create_discovery_run(payload.name.strip() or "BMC discovery", str(network), provider.name, result)
+    store.add_audit(context.username, "discovery.plan", f"discovery:{record.id}", {"cidr": str(network), "provider": provider.name})
+    return record.model_dump(mode="json")
 
 
 @app.get("/access/roles")
@@ -658,11 +739,51 @@ def _permission_for_action(action: str) -> str:
 def _approval_required(action: str, params: dict[str, Any]) -> bool:
     if not os.getenv("STRATAONE_REQUIRE_APPROVALS", "true").lower() in {"1", "true", "yes", "on"}:
         return False
-    return action in {"mount-iso", "deploy-azure-local", "node-replacement"}
+    return action in _approval_required_actions()
+
+
+def _approval_required_actions() -> set[str]:
+    configured = os.getenv("STRATAONE_APPROVAL_ACTIONS", "mount-iso,deploy-azure-local,node-replacement")
+    return {action.strip() for action in configured.split(",") if action.strip()}
 
 
 def _approval_safe_params(params: dict[str, Any]) -> dict[str, Any]:
     return {key: ("***" if key in {"password", "username"} else value) for key, value in params.items()}
+
+
+def _redact_secret(payload: dict[str, Any]) -> dict[str, Any]:
+    safe = dict(payload)
+    if safe.get("reference"):
+        safe["reference"] = "***"
+    if isinstance(safe.get("metadata"), dict):
+        safe["metadata"] = {key: ("***" if "password" in key.lower() or "token" in key.lower() else value) for key, value in safe["metadata"].items()}
+    return safe
+
+
+def _provider_config_template(provider_name: str, provider_type: str) -> dict[str, Any]:
+    if provider_type == "hardware":
+        return {
+            "endpoint": "https://bmc.example.com",
+            "credential_ref": "branch-bmc",
+            "tls_verify": False,
+            "capabilities": ["inventory", "virtual-media", "power"],
+            "lab_validated": False,
+        }
+    if provider_name == "azure-local":
+        return {
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "subscription_id": "00000000-0000-0000-0000-000000000000",
+            "resource_group": "rg-strataone",
+            "region": "westeurope",
+            "credential_ref": "azure-local-spn",
+            "approval_required": True,
+        }
+    return {
+        "endpoint": "https://provider.example.com",
+        "credential_ref": f"{provider_name}-credentials",
+        "approval_required": True,
+        "lab_validated": False,
+    }
 
 
 def _artifact_site_dir(site_name: str) -> Path:
