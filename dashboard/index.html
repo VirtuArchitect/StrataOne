@@ -16,25 +16,28 @@
             <span>Infrastructure Orchestrator</span>
           </div>
         </div>
-        <nav>
-          <a class="active" href="#overview">Overview</a>
-          <a href="#sites">Sites</a>
-          <a href="#jobs">Jobs</a>
-          <a href="#providers">Providers</a>
-          <a href="#artifacts">Artifacts</a>
-          <a href="#lifecycle">Lifecycle</a>
+
+        <nav class="primary-nav" aria-label="Primary">
+          <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item" data-view="deployments">Deployments</button>
+          <button class="nav-item" data-view="sites">Sites</button>
+          <button class="nav-item" data-view="jobs">Jobs</button>
+          <button class="nav-item" data-view="providers">Providers</button>
+          <button class="nav-item" data-view="artifacts">Artifacts</button>
+          <button class="nav-item" data-view="lifecycle">Lifecycle</button>
         </nav>
       </aside>
 
       <main>
         <header class="topbar">
           <div>
-            <h1>Operations Console</h1>
-            <p>Zero-touch orchestration across hardware vendors and virtualization platforms.</p>
+            <h1 id="viewTitle">Overview</h1>
+            <p id="viewSubtitle">Fleet health, deployment readiness, and orchestration activity.</p>
           </div>
           <div class="topbar-actions">
             <div class="status-pill" id="apiStatus">API: checking</div>
-            <button id="refreshAll">Refresh</button>
+            <button id="newDeploymentTop">New Deployment</button>
+            <button class="secondary" id="refreshAll">Refresh</button>
           </div>
         </header>
 
@@ -45,72 +48,233 @@
           <div class="metric"><span>Attention</span><strong id="attentionCount">0</strong></div>
         </section>
 
-        <section class="layout-grid">
-          <div class="panel span-7">
-            <div class="panel-header">
-              <div>
-                <h2>Site Registry</h2>
-                <span>Persistent desired-state inventory</span>
+        <section class="view active" id="view-overview">
+          <div class="layout-grid">
+            <div class="panel span-8">
+              <div class="panel-header">
+                <div>
+                  <h2>Fleet Readiness</h2>
+                  <span>Registered sites and operational state</span>
+                </div>
               </div>
-              <button id="saveSite">Save Site</button>
+              <div class="fleet-strip" id="fleetStrip"></div>
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Platform</th>
-                  <th>Hardware</th>
-                  <th>Nodes</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody id="sitesTable"></tbody>
-            </table>
+            <div class="panel span-4">
+              <div class="panel-header">
+                <div>
+                  <h2>Recommended Flow</h2>
+                  <span>Next actions for a deployment</span>
+                </div>
+              </div>
+              <ol class="flow-list">
+                <li>Create deployment</li>
+                <li>Run inventory</li>
+                <li>Run preflight</li>
+                <li>Generate artifacts</li>
+              </ol>
+            </div>
+            <div class="panel span-6">
+              <div class="panel-header">
+                <div>
+                  <h2>Recent Jobs</h2>
+                  <span>Latest orchestration activity</span>
+                </div>
+              </div>
+              <div class="job-list compact" id="overviewJobs"></div>
+            </div>
+            <div class="panel span-6">
+              <div class="panel-header">
+                <div>
+                  <h2>Result Inspector</h2>
+                  <span id="lastAction">idle</span>
+                </div>
+              </div>
+              <pre id="resultOutput">{}</pre>
+            </div>
           </div>
+        </section>
 
-          <div class="panel span-5">
-            <div class="panel-header">
-              <div>
-                <h2>Selected Site</h2>
-                <span id="selectedSiteLabel">none</span>
+        <section class="view" id="view-deployments">
+          <div class="deployment-shell">
+            <div class="wizard panel">
+              <div class="panel-header">
+                <div>
+                  <h2>New Deployment</h2>
+                  <span>Define site intent, hardware, platform, network, and workloads</span>
+                </div>
+                <button id="loadExample">Load Example</button>
+              </div>
+
+              <div class="wizard-steps">
+                <button class="step active" data-step="intent">1 Intent</button>
+                <button class="step" data-step="hardware">2 Hardware</button>
+                <button class="step" data-step="platform">3 Platform</button>
+                <button class="step" data-step="network">4 Network</button>
+                <button class="step" data-step="review">5 Review</button>
+              </div>
+
+              <div class="wizard-page active" data-page="intent">
+                <div class="form-grid">
+                  <label>Site Name<input id="deployName" value="branch-001" /></label>
+                  <label>Location<input id="deployLocation" value="berlin" /></label>
+                  <label>Deployment Model
+                    <select id="deployModel">
+                      <option value="edge-hci">Edge HCI</option>
+                      <option value="private-cloud">Private cloud</option>
+                      <option value="branch">Branch office</option>
+                      <option value="lab">Lab</option>
+                    </select>
+                  </label>
+                  <label>Cluster Name<input id="clusterName" value="al-branch-001" /></label>
+                </div>
+              </div>
+
+              <div class="wizard-page" data-page="hardware">
+                <div class="choice-grid" id="hardwareChoices">
+                  <button class="choice selected" data-hardware="generic-redfish"><strong>Generic Redfish</strong><span>Vendor-neutral BMC baseline</span></button>
+                  <button class="choice" data-hardware="dell-idrac"><strong>Dell iDRAC</strong><span>OEM shim with Redfish fallback</span></button>
+                  <button class="choice" data-hardware="hpe-ilo"><strong>HPE iLO</strong><span>OEM shim with Redfish fallback</span></button>
+                  <button class="choice" data-hardware="lenovo-xclarity"><strong>Lenovo XClarity</strong><span>OEM shim with Redfish fallback</span></button>
+                  <button class="choice" data-hardware="supermicro-redfish"><strong>Supermicro</strong><span>Redfish-oriented platform</span></button>
+                  <button class="choice" data-hardware="cisco-intersight"><strong>Cisco Intersight</strong><span>Intersight-oriented provider</span></button>
+                </div>
+                <div class="form-grid node-grid">
+                  <label>Node 1 Serial<input id="node1Serial" value="ABC123" /></label>
+                  <label>Node 1 BMC IP<input id="node1Bmc" value="10.10.1.11" /></label>
+                  <label>Node 2 Serial<input id="node2Serial" value="ABC124" /></label>
+                  <label>Node 2 BMC IP<input id="node2Bmc" value="10.10.1.12" /></label>
+                </div>
+              </div>
+
+              <div class="wizard-page" data-page="platform">
+                <div class="choice-grid" id="platformChoices">
+                  <button class="choice selected" data-platform="azure-local"><strong>Azure Local</strong><span>Arc-connected HCI and edge platform</span></button>
+                  <button class="choice" data-platform="vmware-vsphere"><strong>VMware vSphere</strong><span>vCenter and ESXi provider</span></button>
+                  <button class="choice" data-platform="nutanix-ahv"><strong>Nutanix AHV</strong><span>Prism-managed AHV clusters</span></button>
+                  <button class="choice" data-platform="proxmox"><strong>Proxmox</strong><span>Open virtualization cluster</span></button>
+                  <button class="choice" data-platform="hyper-v"><strong>Hyper-V</strong><span>Windows virtualization provider</span></button>
+                  <button class="choice" data-platform="openshift-virtualization"><strong>OpenShift Virtualization</strong><span>Kubernetes-native virtualization</span></button>
+                </div>
+                <div class="form-grid">
+                  <label>Topology<input id="topology" value="two-node-switchless" /></label>
+                  <label>Azure Subscription<input id="subscriptionId" value="00000000-0000-0000-0000-000000000000" /></label>
+                  <label>Azure Tenant<input id="tenantId" value="00000000-0000-0000-0000-000000000000" /></label>
+                  <label>Resource Group<input id="resourceGroup" value="rg-branch-001" /></label>
+                  <label>Azure Region<input id="azureRegion" value="westeurope" /></label>
+                </div>
+              </div>
+
+              <div class="wizard-page" data-page="network">
+                <div class="form-grid">
+                  <label>Management VLAN<input id="managementVlan" type="number" value="100" /></label>
+                  <label>Storage VLAN<input id="storageVlan" type="number" value="110" /></label>
+                  <label>VM VLAN<input id="vmVlan" type="number" value="120" /></label>
+                  <label>DNS Servers<input id="dnsServers" value="10.10.0.10,10.10.0.11" /></label>
+                  <label>NTP Servers<input id="ntpServers" value="time.windows.com" /></label>
+                </div>
+                <div class="toggle-row">
+                  <label><input id="workloadAks" type="checkbox" checked /> AKS enabled by Arc</label>
+                  <label><input id="workloadArcVms" type="checkbox" checked /> Arc VM management</label>
+                  <label><input id="workloadAvd" type="checkbox" /> Azure Virtual Desktop</label>
+                </div>
+              </div>
+
+              <div class="wizard-page" data-page="review">
+                <div class="review-actions">
+                  <button id="generateDesiredState">Generate Desired State</button>
+                  <button id="saveGeneratedDeployment">Save Deployment</button>
+                  <button id="saveAndPlanDeployment">Save & Plan</button>
+                </div>
+                <pre class="review-summary" id="deploymentSummary"></pre>
               </div>
             </div>
-            <div class="action-grid">
-              <button data-job="validate">Validate</button>
-              <button data-job="plan">Plan</button>
-              <button data-job="inventory">Inventory</button>
-              <button data-job="preflight">Preflight</button>
-              <button data-job="artifacts">Artifacts</button>
-            </div>
-            <div class="credential-box">
-              <label>
-                BMC Username
-                <input id="bmcUsername" autocomplete="username" />
-              </label>
-              <label>
-                BMC Password
-                <input id="bmcPassword" type="password" autocomplete="current-password" />
-              </label>
-              <div class="inline-controls">
-                <label><input id="bmcInsecure" type="checkbox" checked /> Allow lab TLS</label>
-                <label>Timeout <input id="bmcTimeout" type="number" min="1" value="10" /></label>
+
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Desired State</h2>
+                  <span>Generated YAML for the selected or new deployment</span>
+                </div>
+                <button id="saveSite">Save Site</button>
               </div>
+              <textarea id="siteYaml" spellcheck="false"></textarea>
             </div>
-            <dl class="detail-list" id="siteDetails"></dl>
           </div>
+        </section>
 
-          <div class="panel span-7">
-            <div class="panel-header">
-              <div>
-                <h2>Desired State</h2>
-                <span>YAML source for the selected site</span>
+        <section class="view" id="view-sites">
+          <div class="layout-grid">
+            <div class="panel span-7">
+              <div class="panel-header">
+                <div>
+                  <h2>Site Registry</h2>
+                  <span>Persistent desired-state inventory</span>
+                </div>
+                <button id="newDeploymentSites">New Deployment</button>
               </div>
-              <button id="loadExample">Load Example</button>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Platform</th>
+                    <th>Hardware</th>
+                    <th>Nodes</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="sitesTable"></tbody>
+              </table>
             </div>
-            <textarea id="siteYaml" spellcheck="false"></textarea>
-          </div>
 
-          <div class="panel span-5">
+            <div class="panel span-5">
+              <div class="panel-header">
+                <div>
+                  <h2>Selected Site</h2>
+                  <span id="selectedSiteLabel">none</span>
+                </div>
+              </div>
+              <div class="action-grid">
+                <button data-job="validate">Validate</button>
+                <button data-job="plan">Plan</button>
+                <button data-job="inventory">Inventory</button>
+                <button data-job="preflight">Preflight</button>
+                <button data-job="artifacts">Artifacts</button>
+              </div>
+              <div class="credential-box">
+                <label>BMC Username<input id="bmcUsername" autocomplete="username" /></label>
+                <label>BMC Password<input id="bmcPassword" type="password" autocomplete="current-password" /></label>
+                <div class="inline-controls">
+                  <label><input id="bmcInsecure" type="checkbox" checked /> Allow lab TLS</label>
+                  <label>Timeout <input id="bmcTimeout" type="number" min="1" value="10" /></label>
+                </div>
+              </div>
+              <dl class="detail-list" id="siteDetails"></dl>
+            </div>
+
+            <div class="panel span-6">
+              <div class="panel-header">
+                <div>
+                  <h2>Latest Inventory</h2>
+                  <span id="inventorySummary">No inventory collected</span>
+                </div>
+              </div>
+              <div class="inventory-list" id="inventoryList"></div>
+            </div>
+
+            <div class="panel span-6">
+              <div class="panel-header">
+                <div>
+                  <h2>Site YAML</h2>
+                  <span>Editable desired state for the selected site</span>
+                </div>
+              </div>
+              <textarea id="selectedYaml" spellcheck="false"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-jobs">
+          <div class="panel">
             <div class="panel-header">
               <div>
                 <h2>Job History</h2>
@@ -119,35 +283,58 @@
             </div>
             <div class="job-list" id="jobsList"></div>
           </div>
+        </section>
 
-          <div class="panel span-6">
-            <div class="panel-header">
-              <div>
-                <h2>Latest Inventory</h2>
-                <span id="inventorySummary">No inventory collected</span>
-              </div>
-            </div>
-            <div class="inventory-list" id="inventoryList"></div>
-          </div>
-
-          <div class="panel span-6">
+        <section class="view" id="view-providers">
+          <div class="panel">
             <div class="panel-header">
               <div>
                 <h2>Provider Catalog</h2>
-                <span>Built-in and discovered plugins</span>
+                <span>Built-in and discovered hardware/platform providers</span>
               </div>
             </div>
             <div class="provider-list" id="providerList"></div>
           </div>
+        </section>
 
-          <div class="panel span-6">
+        <section class="view" id="view-artifacts">
+          <div class="layout-grid">
+            <div class="panel span-5">
+              <div class="panel-header">
+                <div>
+                  <h2>Artifact Generation</h2>
+                  <span>Create Azure Local deployment bundles</span>
+                </div>
+                <button data-job="artifacts">Generate</button>
+              </div>
+              <dl class="detail-list" id="artifactDetails"></dl>
+            </div>
+            <div class="panel span-7">
+              <div class="panel-header">
+                <div>
+                  <h2>Artifact Result</h2>
+                  <span>Latest bundle metadata</span>
+                </div>
+              </div>
+              <pre id="artifactOutput">{}</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-lifecycle">
+          <div class="panel">
             <div class="panel-header">
               <div>
-                <h2>Result Inspector</h2>
-                <span id="lastAction">idle</span>
+                <h2>Lifecycle Readiness</h2>
+                <span>Planned Day-2 operational controls</span>
               </div>
             </div>
-            <pre id="resultOutput">{}</pre>
+            <div class="lifecycle-grid">
+              <div class="capability"><strong>Firmware Compliance</strong><span>Uses Redfish/OEM inventory baselines.</span></div>
+              <div class="capability"><strong>Update Rings</strong><span>Prepares staged rollout workflows.</span></div>
+              <div class="capability"><strong>Drift Detection</strong><span>Compares latest state to desired state.</span></div>
+              <div class="capability"><strong>Node Replacement</strong><span>Guided rebuild flow for failed hosts.</span></div>
+            </div>
           </div>
         </section>
       </main>
