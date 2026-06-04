@@ -266,7 +266,25 @@ button.mini {
 }
 
 .template-card:hover {
+  background: var(--accent);
   border-color: var(--teal);
+  color: #ffffff;
+}
+
+.template-card:hover strong,
+.template-card:hover span,
+.template-card:hover small,
+.choice:hover strong,
+.choice:hover span,
+.capability:hover strong,
+.capability:hover span {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.template-card:hover strong,
+.choice:hover strong,
+.capability:hover strong {
+  color: #ffffff;
 }
 
 .template-card small,
@@ -754,6 +772,11 @@ input[type="checkbox"]:focus {
 .choice strong { display: block; font-size: 14px; }
 .choice span { color: var(--muted); display: block; font-size: 12px; margin-top: 4px; }
 .choice.selected { border-color: var(--teal); box-shadow: inset 4px 0 0 var(--teal); }
+.choice:hover {
+  background: var(--accent);
+  border-color: var(--teal);
+  color: #ffffff;
+}
 
 .toggle-row {
   display: flex;
@@ -1163,7 +1186,9 @@ textarea {
 }
 
 .capability:hover {
-  background: var(--hover-bg);
+  background: var(--accent);
+  border-color: var(--teal);
+  color: #ffffff;
 }
 
 .flow-list {
