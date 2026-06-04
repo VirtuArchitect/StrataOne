@@ -6,8 +6,18 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 
 ## [Unreleased]
 
+## [0.2.0-preview] - 2026-06-04
+
 ### Added
 
+- API rate limiting middleware with configurable request/window limits.
+- API security headers for CSP, frame protection, content sniffing protection, referrer policy, permissions policy, and optional HSTS.
+- Nginx dashboard security headers and static asset cache policy.
+- Nginx reverse proxy/front door for combined dashboard and API routing.
+- GitHub Actions CI workflow for tests, Docker image build, and Compose validation.
+- Tenant-aware access metadata and tenant-scoped filtering for sites, jobs, and inventory.
+- Provider validation harness endpoint with live-provider gating.
+- Enterprise-control regression tests covering rate limits, headers, tenant scoping, provider validation, CI, and proxy config.
 - Dashboard approval request form for protected live actions.
 - Clickable dashboard KPI tiles for sites, all jobs, successful jobs, and attention jobs.
 - Sidebar navigation icons for primary dashboard sections.
@@ -24,6 +34,8 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 ### Fixed
 
 - About page release notes now span the full content width.
+- CI test dependency resolution for clean Python 3.12 GitHub Actions runners.
+- GitHub Actions JavaScript runtime warning by opting the workflow into Node 24.
 
 ## [0.1.0-preview] - 2026-06-03
 

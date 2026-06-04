@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
 import requests
 
+from strataone import __version__
 from strataone.artifacts import ArtifactGenerator
 from strataone.inventory import InventoryReport
 from strataone.jobs import JobRunner
@@ -161,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="StrataOne API",
-    version="0.1.0",
+    version=__version__,
     description="API for vendor-agnostic, hypervisor-agnostic zero-touch orchestration.",
     lifespan=lifespan,
 )
