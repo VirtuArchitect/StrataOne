@@ -21,6 +21,11 @@ services:
       STRATAONE_ENABLE_LIVE_REDFISH: ${STRATAONE_ENABLE_LIVE_REDFISH:-false}
       STRATAONE_REQUIRE_OEM_VALIDATION: ${STRATAONE_REQUIRE_OEM_VALIDATION:-true}
       STRATAONE_REQUIRE_APPROVALS: ${STRATAONE_REQUIRE_APPROVALS:-true}
+      STRATAONE_RATE_LIMIT_ENABLED: ${STRATAONE_RATE_LIMIT_ENABLED:-true}
+      STRATAONE_RATE_LIMIT_REQUESTS: ${STRATAONE_RATE_LIMIT_REQUESTS:-120}
+      STRATAONE_RATE_LIMIT_WINDOW_SECONDS: ${STRATAONE_RATE_LIMIT_WINDOW_SECONDS:-60}
+      STRATAONE_HSTS_ENABLED: ${STRATAONE_HSTS_ENABLED:-false}
+      STRATAONE_TENANT_ENFORCEMENT: ${STRATAONE_TENANT_ENFORCEMENT:-true}
       STRATAONE_OEM_VALIDATION_FILE: ${STRATAONE_OEM_VALIDATION_FILE:-.strataone/oem-validation.json}
       STRATAONE_VAULT_PROVIDER: ${STRATAONE_VAULT_PROVIDER:-env}
       STRATAONE_VAULT_FILE: ${STRATAONE_VAULT_FILE:-}
@@ -66,8 +71,19 @@ services:
       - "${STRATAONE_DASHBOARD_PORT:-8088}:80"
     volumes:
       - ./dashboard:/usr/share/nginx/html:ro
+      - ./deploy/nginx/dashboard.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - strataone-api
+
+  strataone-proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "${STRATAONE_PROXY_PORT:-8089}:80"
+    volumes:
+      - ./deploy/nginx/proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - strataone-api
+      - strataone-dashboard
 
   postgres:
     image: postgres:16-alpine

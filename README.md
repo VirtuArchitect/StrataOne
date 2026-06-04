@@ -131,6 +131,7 @@ docker compose up --build
 Services:
 
 - Dashboard: http://localhost:8088
+- Reverse proxy / single front door: http://localhost:8089
 - API: http://localhost:8080
 - API health: http://localhost:8080/health
 - API docs: http://localhost:8080/docs
@@ -150,6 +151,7 @@ The Compose stack currently runs:
 - `strataone-api`: FastAPI service for validation, planning, and orchestration requests
 - `strataone-worker`: queue worker for Redis-dispatched orchestration jobs
 - `strataone-dashboard`: static operational dashboard served by Nginx
+- `strataone-proxy`: Nginx reverse proxy for dashboard and API routing
 - `postgres`: durable state backend for sites, jobs, inventory, users, and roles
 - `redis`: production job dispatch queue
 
@@ -160,6 +162,14 @@ Runtime state uses PostgreSQL and Redis in Compose. Local development can still 
 
 Set `STRATAONE_POSTGRES_DSN`, `STRATAONE_REDIS_URL`, `STRATAONE_DB`, `STRATAONE_ARTIFACT_DIR`, or `STRATAONE_PLUGIN_DIR` to override runtime paths and backends.
 Set `STRATAONE_CORS_ORIGINS` to the trusted dashboard/API origins allowed to call the API. Set `STRATAONE_SEED_EXAMPLE=false` for production-like environments so the example site is not inserted automatically.
+API responses include production security headers by default, including CSP, frame protection, content-type sniffing protection, and referrer policy. Enable HSTS only when StrataOne is served over HTTPS:
+
+```env
+STRATAONE_RATE_LIMIT_ENABLED=true
+STRATAONE_RATE_LIMIT_REQUESTS=120
+STRATAONE_RATE_LIMIT_WINDOW_SECONDS=60
+STRATAONE_HSTS_ENABLED=true
+```
 
 Protected API routes enforce bearer-token authentication when `STRATAONE_AUTH_ENABLED=true`. Use a bootstrap token for initial administration, or provide named API tokens mapped to RBAC roles:
 
@@ -168,6 +178,13 @@ STRATAONE_AUTH_ENABLED=true
 STRATAONE_BOOTSTRAP_TOKEN=change-this-token
 STRATAONE_ADMIN_PASSWORD=change-this-password
 STRATAONE_API_TOKENS=operator-token=edge.operator:Viewer,Operator
+```
+
+API tokens can optionally scope access to a tenant with `@tenant-id`. Tenant enforcement filters sites, jobs, and inventory by tenant:
+
+```env
+STRATAONE_TENANT_ENFORCEMENT=true
+STRATAONE_API_TOKENS=tenant-a-token=edge.operator:Viewer,Operator@tenant-a
 ```
 
 The dashboard signs in with local username/password sessions. The default Compose account is `admin` with `change-this-password`; override `STRATAONE_ADMIN_PASSWORD` before production use. Bootstrap/API tokens are still available for automation and emergency administration.
@@ -208,6 +225,7 @@ GET  /health
 GET  /providers
 GET  /providers/{provider_name}
 POST /providers/{provider_name}/config
+POST /providers/{provider_name}/validation/run
 GET  /sites/example
 GET  /sites
 POST /sites

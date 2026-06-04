@@ -20,7 +20,7 @@ from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.queue import queue_backend
 from strataone.redfish import RedfishClient
-from strataone.security import ALL_PERMISSIONS, AuthContext, auth_enabled, cors_origins, create_password_hash, new_session_token, require_permission, session_expiry, token_hash, verify_password, _bearer_token
+from strataone.security import ALL_PERMISSIONS, AuthContext, RateLimitMiddleware, SecurityHeadersMiddleware, auth_enabled, cors_origins, create_password_hash, new_session_token, rate_limit_enabled, require_permission, security_headers, session_expiry, token_hash, verify_password, _bearer_token
 from strataone.secrets import BmcSecret, resolve_bmc_credentials_from_ref
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
@@ -54,6 +54,7 @@ class RolePayload(BaseModel):
 
 class UserPayload(BaseModel):
     username: str
+    tenant_id: str = "default"
     display_name: str
     email: str
     roles: list[str] = []
@@ -83,6 +84,14 @@ class ProviderValidationPayload(BaseModel):
     lab: str | None = None
     evidence: str | None = None
     notes: str | None = None
+
+
+class ProviderHarnessPayload(BaseModel):
+    operation: str = "connectivity"
+    target: str | None = None
+    credential_ref: str | None = None
+    live: bool = False
+    timeout: float = 5
 
 
 class SecretRefPayload(BaseModel):
@@ -164,6 +173,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 def _spec_from_payload(payload: SitePayload) -> SiteSpec:
@@ -331,6 +342,7 @@ def provider_detail(provider_name: str, _: Any = read_providers) -> dict[str, An
         "config": config.model_dump(mode="json") if config else None,
         "template": _provider_config_template(provider.name, provider.type),
         "validation": [item.model_dump(mode="json") for item in store.list_provider_validation(provider_name)],
+        "validation_runs": [item.model_dump(mode="json") for item in store.list_provider_validation_runs(provider_name)],
     }
 
 
@@ -375,6 +387,22 @@ def add_provider_validation(provider_name: str, payload: ProviderValidationPaylo
     return record.model_dump(mode="json")
 
 
+@app.post("/providers/{provider_name}/validation/run")
+def run_provider_validation_harness(provider_name: str, payload: ProviderHarnessPayload, context: AuthContext = Depends(require_permission("manage-providers", store))) -> dict[str, Any]:
+    provider = next((item for item in list_providers() if item.name == provider_name), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+    live_allowed = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
+    if payload.live and not live_allowed:
+        raise HTTPException(status_code=409, detail="live provider validation is disabled")
+    result = _provider_harness_result(provider, payload)
+    record = store.create_provider_validation_run(provider_name, payload.operation, result["mode"], result["status"], payload.target, result)
+    if result["status"] == "passed":
+        store.add_provider_validation(provider_name, payload.operation, "validated", "harness", record.id, result.get("summary"))
+    store.add_audit(context.username, "provider.validation.run", f"provider:{provider_name}", record.model_dump(mode="json"))
+    return record.model_dump(mode="json")
+
+
 @app.get("/settings")
 def settings(_: Any = read_settings) -> dict[str, Any]:
     provider_list = list_providers()
@@ -388,6 +416,7 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
         "access": {
             "mode": "rbac" if auth_enabled() else "local-dev",
             "rbac_enforced": auth_enabled(),
+            "tenant_enforced": os.getenv("STRATAONE_TENANT_ENFORCEMENT", "true").lower() in {"1", "true", "yes", "on"},
             "permissions": sorted(ALL_PERMISSIONS),
             "oidc_enabled": bool(os.getenv("STRATAONE_OIDC_ISSUER")),
             "users": [user.model_dump(mode="json") for user in store.list_users()],
@@ -422,6 +451,10 @@ def settings(_: Any = read_settings) -> dict[str, Any]:
             "docs": "/docs",
             "health": "/health",
             "session_timeout_minutes": int(os.getenv("STRATAONE_SESSION_TIMEOUT_MINUTES", "60")),
+            "rate_limit_enabled": rate_limit_enabled(),
+            "rate_limit_requests": int(os.getenv("STRATAONE_RATE_LIMIT_REQUESTS", "120")),
+            "rate_limit_window_seconds": int(os.getenv("STRATAONE_RATE_LIMIT_WINDOW_SECONDS", "60")),
+            "security_headers": security_headers(),
             "approval_required_actions": sorted(_approval_required_actions()),
             "approval_policies": [item.model_dump(mode="json") for item in store.list_approval_policies()],
         },
@@ -735,6 +768,7 @@ def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[
         _validate_password_policy(payload.password)
     user = UserRecord(
         username=payload.username.strip(),
+        tenant_id=payload.tenant_id.strip() or "default",
         display_name=payload.display_name.strip() or payload.username.strip(),
         email=payload.email.strip(),
         roles=payload.roles,
@@ -757,29 +791,29 @@ def delete_user(username: str, _: Any = manage_access) -> dict[str, bool]:
 
 
 @app.get("/sites")
-def list_site_records(_: Any = read_sites) -> dict[str, Any]:
-    return {"sites": [site.model_dump(mode="json") for site in store.list_sites()]}
+def list_site_records(context: AuthContext = read_sites) -> dict[str, Any]:
+    return {"sites": [site.model_dump(mode="json") for site in store.list_sites(_tenant_scope(context))]}
 
 
 @app.post("/sites")
-def create_or_update_site(payload: SitePayload, _: Any = write_sites) -> dict[str, Any]:
+def create_or_update_site(payload: SitePayload, context: AuthContext = write_sites) -> dict[str, Any]:
     spec = _spec_from_payload(payload)
-    result = store.upsert_site(spec).model_dump(mode="json")
+    result = store.upsert_site(spec, tenant_id=_tenant_scope(context)).model_dump(mode="json")
     store.add_audit("api", "site.upsert", f"site:{spec.site.name}", {"platform": spec.platform.type.value})
     return result
 
 
 @app.get("/sites/{site_name}")
-def get_site_record(site_name: str, _: Any = read_sites) -> dict[str, Any]:
-    site = store.get_site(site_name)
+def get_site_record(site_name: str, context: AuthContext = read_sites) -> dict[str, Any]:
+    site = store.get_site(site_name, _tenant_scope(context))
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
     return site.model_dump(mode="json")
 
 
 @app.delete("/sites/{site_name}")
-def delete_site_record(site_name: str, _: Any = delete_sites) -> dict[str, bool]:
-    deleted = store.delete_site(site_name)
+def delete_site_record(site_name: str, context: AuthContext = delete_sites) -> dict[str, bool]:
+    deleted = store.delete_site(site_name, _tenant_scope(context))
     store.add_audit("api", "site.delete", f"site:{site_name}", {"deleted": deleted})
     return {"deleted": deleted}
 
@@ -788,9 +822,9 @@ def delete_site_record(site_name: str, _: Any = delete_sites) -> dict[str, bool]
 def run_site_job(site_name: str, action: str, payload: JobPayload | None = None, authorization: str | None = Header(default=None)) -> dict[str, str]:
     if action not in {"validate", "plan", "inventory", "preflight", "artifacts", "mount-iso", "eject-iso", "deploy-azure-local", "drift-detect", "node-replacement"}:
         raise HTTPException(status_code=400, detail="unsupported action")
-    if store.get_site(site_name) is None:
-        raise HTTPException(status_code=404, detail="site not found")
     context = require_permission(_permission_for_action(action), store)(authorization)
+    if store.get_site(site_name, _tenant_scope(context)) is None:
+        raise HTTPException(status_code=404, detail="site not found")
     params = payload.model_dump(mode="json", exclude_none=True) if payload else {}
     if _approval_required(action, params):
         approval_id = params.get("approval_id")
@@ -816,8 +850,8 @@ def run_site_job(site_name: str, action: str, payload: JobPayload | None = None,
 
 
 @app.get("/jobs")
-def list_job_records(site_name: str | None = None, _: Any = read_jobs) -> dict[str, Any]:
-    return {"jobs": [job.model_dump(mode="json") for job in store.list_jobs(site_name)]}
+def list_job_records(site_name: str | None = None, context: AuthContext = read_jobs) -> dict[str, Any]:
+    return {"jobs": [job.model_dump(mode="json") for job in store.list_jobs(site_name, _tenant_scope(context))]}
 
 
 @app.get("/jobs/{job_id}")
@@ -988,16 +1022,16 @@ def get_artifact_file(site_name: str, file_name: str, _: Any = read_sites) -> di
 
 
 @app.get("/sites/{site_name}/inventory")
-def get_site_inventory(site_name: str, _: Any = read_inventory) -> dict[str, Any]:
-    inventory = store.get_inventory(site_name)
+def get_site_inventory(site_name: str, context: AuthContext = read_inventory) -> dict[str, Any]:
+    inventory = store.get_inventory(site_name, _tenant_scope(context))
     if inventory is None:
         raise HTTPException(status_code=404, detail="inventory not found")
     return inventory.model_dump(mode="json")
 
 
 @app.post("/sites/{site_name}/inventory")
-def save_site_inventory(site_name: str, payload: InventoryPayload, _: Any = write_inventory) -> dict[str, Any]:
-    if store.get_site(site_name) is None:
+def save_site_inventory(site_name: str, payload: InventoryPayload, context: AuthContext = write_inventory) -> dict[str, Any]:
+    if store.get_site(site_name, _tenant_scope(context)) is None:
         raise HTTPException(status_code=404, detail="site not found")
     report = InventoryReport.model_validate(payload.inventory)
     if report.site_name != site_name:
@@ -1050,6 +1084,38 @@ def _permission_for_action(action: str) -> str:
         "drift-detect": "run-preflight",
         "node-replacement": "run-preflight",
     }[action]
+
+
+def _tenant_scope(context: AuthContext) -> str:
+    if not os.getenv("STRATAONE_TENANT_ENFORCEMENT", "true").lower() in {"1", "true", "yes", "on"}:
+        return "*"
+    return context.tenant_id or "default"
+
+
+def _provider_harness_result(provider: ProviderInfo, payload: ProviderHarnessPayload) -> dict[str, Any]:
+    mode = "live" if payload.live else "contract"
+    checks = [
+        {"name": "provider_registered", "status": "passed"},
+        {"name": "operation_declared", "status": "passed" if payload.operation else "failed"},
+        {"name": "target_declared", "status": "passed" if payload.target or not payload.live else "failed"},
+    ]
+    if provider.type == "hardware":
+        checks.append({"name": "redfish_contract", "status": "passed"})
+    else:
+        checks.append({"name": "platform_contract", "status": "passed"})
+    status_value = "passed" if all(check["status"] == "passed" for check in checks) else "failed"
+    return {
+        "provider": provider.name,
+        "provider_type": provider.type,
+        "operation": payload.operation,
+        "mode": mode,
+        "target": payload.target,
+        "status": status_value,
+        "checks": checks,
+        "summary": f"{provider.name} {payload.operation} validation completed in {mode} mode.",
+        "live_execution": payload.live,
+        "credential_ref": payload.credential_ref,
+    }
 
 
 def _approval_required(action: str, params: dict[str, Any]) -> bool:

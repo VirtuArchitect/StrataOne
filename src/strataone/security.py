@@ -3,11 +3,13 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Callable
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, Response, status
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from strataone.store import StrataStore
 
@@ -42,6 +44,7 @@ class AuthContext:
     username: str
     roles: list[str]
     permissions: set[str]
+    tenant_id: str = "default"
 
 
 def auth_enabled() -> bool:
@@ -66,6 +69,57 @@ def require_permission(permission: str, store: StrataStore) -> Callable[[str | N
     return dependency
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        headers = security_headers()
+        for name, value in headers.items():
+            response.headers.setdefault(name, value)
+        return response
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    _buckets: dict[str, list[float]] = {}
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if not rate_limit_enabled():
+            return await call_next(request)
+        limit = int(os.getenv("STRATAONE_RATE_LIMIT_REQUESTS", "120"))
+        window = float(os.getenv("STRATAONE_RATE_LIMIT_WINDOW_SECONDS", "60"))
+        key = _rate_limit_key(request)
+        now = time.monotonic()
+        bucket = [stamp for stamp in self._buckets.get(key, []) if now - stamp < window]
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window - (now - bucket[0])))
+            response = Response("rate limit exceeded", status_code=status.HTTP_429_TOO_MANY_REQUESTS)
+            response.headers["Retry-After"] = str(retry_after)
+            return response
+        bucket.append(now)
+        self._buckets[key] = bucket
+        return await call_next(request)
+
+
+def rate_limit_enabled() -> bool:
+    return os.getenv("STRATAONE_RATE_LIMIT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def security_headers() -> dict[str, str]:
+    csp = os.getenv(
+        "STRATAONE_CONTENT_SECURITY_POLICY",
+        "default-src 'self'; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'",
+    )
+    headers = {
+        "Content-Security-Policy": csp,
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
+    if os.getenv("STRATAONE_HSTS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        headers["Strict-Transport-Security"] = os.getenv("STRATAONE_HSTS_VALUE", "max-age=31536000; includeSubDomains")
+    return headers
+
+
 def authenticate(authorization: str | None, store: StrataStore) -> AuthContext:
     if not auth_enabled():
         return AuthContext(username="local-dev", roles=["Platform Admin"], permissions={"*"})
@@ -74,19 +128,19 @@ def authenticate(authorization: str | None, store: StrataStore) -> AuthContext:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="bearer token required")
     bootstrap = os.getenv("STRATAONE_BOOTSTRAP_TOKEN", "")
     if bootstrap and token == bootstrap:
-        return AuthContext(username="bootstrap", roles=["Platform Admin"], permissions={"*"})
+        return AuthContext(username="bootstrap", roles=["Platform Admin"], permissions={"*"}, tenant_id="*")
     token_map = _configured_tokens()
     subject = token_map.get(token)
     if subject is not None:
-        username, roles = subject
+        username, roles, tenant_id = subject
         permissions = _permissions_for_roles(roles, store)
-        return AuthContext(username=username, roles=roles, permissions=permissions)
+        return AuthContext(username=username, roles=roles, permissions=permissions, tenant_id=tenant_id)
     session_user = store.get_session_user(token_hash(token), datetime.now(UTC).isoformat())
     if session_user is None or session_user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
     username, roles = session_user.username, session_user.roles
     permissions = _permissions_for_roles(roles, store)
-    return AuthContext(username=username, roles=roles, permissions=permissions)
+    return AuthContext(username=username, roles=roles, permissions=permissions, tenant_id=session_user.tenant_id)
 
 
 def create_password_hash(password: str) -> str:
@@ -140,16 +194,17 @@ def _bearer_token(authorization: str | None) -> str | None:
     return token.strip()
 
 
-def _configured_tokens() -> dict[str, tuple[str, list[str]]]:
-    mapping: dict[str, tuple[str, list[str]]] = {}
+def _configured_tokens() -> dict[str, tuple[str, list[str], str]]:
+    mapping: dict[str, tuple[str, list[str], str]] = {}
     configured = os.getenv("STRATAONE_API_TOKENS", "")
     for entry in configured.split(";"):
         if not entry.strip() or "=" not in entry:
             continue
         token, subject = entry.split("=", 1)
         username, _, roles_text = subject.partition(":")
-        roles = [role.strip() for role in roles_text.split(",") if role.strip()]
-        mapping[token.strip()] = (username.strip() or "api-token", roles)
+        role_text, _, tenant_text = roles_text.partition("@")
+        roles = [role.strip() for role in role_text.split(",") if role.strip()]
+        mapping[token.strip()] = (username.strip() or "api-token", roles, tenant_text.strip() or "default")
     return mapping
 
 
@@ -161,3 +216,14 @@ def _permissions_for_roles(roles: list[str], store: StrataStore) -> set[str]:
             continue
         permissions.update(role.permissions)
     return permissions
+
+
+def _rate_limit_key(request: Request) -> str:
+    token = _bearer_token(request.headers.get("Authorization"))
+    if token:
+        return f"token:{token_hash(token)}"
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",", 1)[0].strip() if forwarded else ""
+    if not ip and request.client:
+        ip = request.client.host
+    return f"ip:{ip or 'unknown'}:{request.url.path}"
