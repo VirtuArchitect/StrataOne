@@ -12,11 +12,16 @@ const state = {
   audit: [],
   sessions: [],
   discovery: [],
+  templates: [],
+  compatibility: null,
+  releases: [],
+  topology: null,
   settings: null,
   inventory: null,
   selectedJobId: null,
   selectedDetailTab: "overview",
   eventStreamAbort: null,
+  eventSocket: null,
   selectedSite: null,
   jobFilter: "all",
   selectedHardware: "generic-redfish",
@@ -25,6 +30,7 @@ const state = {
   authUser: localStorage.getItem("strataone.authUser") || "operator",
   activeView: "overview",
   activeStep: "intent",
+  theme: localStorage.getItem("strataone.theme") || "dark",
   deploymentNodes: [
     { serial: "ABC123", bmc_ip: "10.10.1.11", role: "host" },
     { serial: "ABC124", bmc_ip: "10.10.1.12", role: "host" },
@@ -34,12 +40,12 @@ const state = {
 const productInfo = {
   name: "StrataOne",
   edition: "Enterprise preview",
-  version: "0.2.0-preview",
+  version: "0.3.0-preview",
   developer: "John Goulden",
   organization: "VirtuArchitect",
   repository: "https://github.com/VirtuArchitect/StrataOne",
   license: "MIT",
-  apiVersion: "0.2.0",
+  apiVersion: "0.3.0",
 };
 
 const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
@@ -76,6 +82,9 @@ const els = {
   deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
   providerMatrix: document.querySelector("#providerMatrix"),
   discoveryList: document.querySelector("#discoveryList"),
+  templateStrip: document.querySelector("#templateStrip"),
+  topologyMap: document.querySelector("#topologyMap"),
+  releaseList: document.querySelector("#releaseList"),
   aboutGrid: document.querySelector("#aboutGrid"),
   settingsTitle: document.querySelector("#settingsTitle"),
   settingsSubtitle: document.querySelector("#settingsSubtitle"),
@@ -118,6 +127,7 @@ const viewCopy = {
   lifecycle: ["Lifecycle", "Plan Day-2 controls such as drift, updates, and node replacement."],
   settings: ["Settings", "Configure access posture, database, providers, artifacts, and audit policy."],
   about: ["About", "Version, ownership, licensing, and product information."],
+  releases: ["Releases", "Changelog entries and preview feature history."],
 };
 
 const settingsCopy = {
@@ -129,6 +139,7 @@ const settingsCopy = {
   api: ["API", "API exposure, docs, CORS, and session policy"],
   artifacts: ["Artifacts", "Artifact output and retention policy"],
   audit: ["Audit", "Audit and history-retention posture"],
+  notifications: ["Notifications", "Teams, Slack, email, and webhook integration tests"],
 };
 
 const lifecycleItems = [
@@ -159,6 +170,7 @@ const lifecycleItems = [
 ];
 
 const exampleYaml = toYaml(exampleSpec());
+document.documentElement.dataset.theme = state.theme;
 els.siteYaml.value = exampleYaml;
 
 wireEvents();
@@ -191,6 +203,9 @@ function wireEvents() {
   document.querySelector("#refreshJobDetail").addEventListener("click", refreshSelectedJobDetail);
   document.querySelector("#refreshDiscovery").addEventListener("click", loadDiscovery);
   document.querySelector("#refreshSettings").addEventListener("click", loadSettings);
+  document.querySelector("#refreshReleases")?.addEventListener("click", loadReleases);
+  document.querySelector("#refreshTopology")?.addEventListener("click", loadTopology);
+  document.querySelector("#themeToggle").addEventListener("click", toggleTheme);
   document.querySelector("#editSettingsSection").addEventListener("click", () => showSettingsEditor(activeSettingsSection()));
   document.querySelector("#logoutButton").addEventListener("click", toggleAuthSession);
   document.querySelector("#cancelLogin").addEventListener("click", hideAuthModal);
@@ -306,7 +321,7 @@ function selectChoice(type, value) {
 async function refreshAll() {
   await checkApi();
   try {
-    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings(), loadDiscovery(), loadIsos()]);
+    await Promise.all([loadSites(), loadJobs(), loadProviders(), loadApprovals(), loadSettings(), loadDiscovery(), loadIsos(), loadTemplates(), loadCompatibility(), loadReleases()]);
   } catch (error) {
     if (isAuthError(error)) {
       renderAuthRequired();
@@ -336,6 +351,7 @@ async function loadSites() {
   renderApprovalRequestOptions();
   renderFleet();
   await loadInventory();
+  await loadTopology();
   renderMetrics();
 }
 
@@ -418,6 +434,49 @@ async function loadIsos() {
   }
 }
 
+async function loadTemplates() {
+  try {
+    const data = await apiGet("/templates");
+    state.templates = data.templates || [];
+  } catch {
+    state.templates = [];
+  }
+  renderTemplates();
+}
+
+async function loadCompatibility() {
+  try {
+    state.compatibility = await apiGet("/compatibility");
+  } catch {
+    state.compatibility = null;
+  }
+  renderProviderMatrix();
+}
+
+async function loadReleases() {
+  try {
+    const data = await apiGet("/releases");
+    state.releases = data.releases || [];
+  } catch {
+    state.releases = [];
+  }
+  renderReleases();
+}
+
+async function loadTopology() {
+  if (!state.selectedSite) {
+    state.topology = null;
+    renderTopology();
+    return;
+  }
+  try {
+    state.topology = await apiGet(`/sites/${encodeURIComponent(state.selectedSite)}/topology`);
+  } catch {
+    state.topology = null;
+  }
+  renderTopology();
+}
+
 function activeSettingsSection() {
   return document.querySelector(".settings-tab.active")?.dataset.settingsSection || "general";
 }
@@ -432,7 +491,7 @@ function showSettingsSection(section) {
     els.settingsContent.innerHTML = `<div class="settings-empty">Loading settings...</div>`;
     return;
   }
-  els.settingsContent.innerHTML = renderSettingsSection(section, state.settings[section]);
+  els.settingsContent.innerHTML = renderSettingsSection(section, state.settings[section] || {});
 }
 
 async function saveSite(spec) {
@@ -526,6 +585,7 @@ function selectSite(name) {
   state.selectedSite = name;
   renderSites();
   loadInventory();
+  loadTopology();
 }
 
 function renderSelectedSite() {
@@ -684,6 +744,33 @@ function renderJobDetail(job, events) {
 
 async function streamJobEvents(jobId) {
   if (state.eventStreamAbort) state.eventStreamAbort.abort();
+  if (state.eventSocket) {
+    state.eventSocket.close();
+    state.eventSocket = null;
+  }
+  if (window.WebSocket) {
+    const base = new URL(apiBase);
+    base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+    base.pathname = `/jobs/${encodeURIComponent(jobId)}/events/ws`;
+    if (state.authToken) base.searchParams.set("token", state.authToken);
+    try {
+      const socket = new WebSocket(base.toString());
+      state.eventSocket = socket;
+      socket.onmessage = (message) => {
+        const payload = JSON.parse(message.data);
+        if (payload.type === "job-event") appendJobEvent(payload.event, "websocket");
+        if (payload.type === "job-complete") writeResult("job stream complete", payload.job);
+      };
+      socket.onerror = () => streamJobEventsSse(jobId);
+      return;
+    } catch {
+      // Fall back to authenticated SSE below.
+    }
+  }
+  await streamJobEventsSse(jobId);
+}
+
+async function streamJobEventsSse(jobId) {
   if (!state.authToken) return;
   const controller = new AbortController();
   state.eventStreamAbort = controller;
@@ -714,18 +801,22 @@ function appendSseEvent(chunk) {
   if (!line) return;
   try {
     const event = JSON.parse(line.slice(6));
-    const list = document.querySelector("#activeEventList");
-    if (!list || list.querySelector(`[data-event-id="${event.id}"]`)) return;
-    list.insertAdjacentHTML("beforeend", `
-      <div class="event-row ${escapeHtml(event.level)}" data-event-id="${escapeHtml(event.id)}">
-        <strong>${escapeHtml(event.message)}</strong>
-        <span>${formatDate(event.created_at)} - ${escapeHtml(JSON.stringify(event.detail || {}))}</span>
-      </div>
-    `);
-    list.scrollTop = list.scrollHeight;
+    appendJobEvent(event, "sse");
   } catch {
     return;
   }
+}
+
+function appendJobEvent(event, transport) {
+  const list = document.querySelector("#activeEventList");
+  if (!list || list.querySelector(`[data-event-id="${event.id}"]`)) return;
+  list.insertAdjacentHTML("beforeend", `
+    <div class="event-row ${escapeHtml(event.level)}" data-event-id="${escapeHtml(event.id)}">
+      <strong>${escapeHtml(event.message)}</strong>
+      <span>${formatDate(event.created_at)} - ${escapeHtml(JSON.stringify(event.detail || {}))} - ${escapeHtml(transport)}</span>
+    </div>
+  `);
+  list.scrollTop = list.scrollHeight;
 }
 
 function jobTimeline(job, events) {
@@ -783,7 +874,10 @@ function renderInventory() {
 
 function renderArtifactsList() {
   if (!els.artifactList) return;
-  els.artifactList.innerHTML = state.artifacts.map((file) => `
+  const bundle = state.selectedSite && state.artifacts.length
+    ? `<button class="list-item artifact-item" data-download-bundle="${escapeHtml(state.selectedSite)}"><strong>Download artifact bundle</strong><span>ZIP with generated deployment outputs</span></button>`
+    : "";
+  els.artifactList.innerHTML = bundle + state.artifacts.map((file) => `
     <button class="list-item artifact-item" data-artifact-file="${escapeHtml(file.name)}">
       <strong>${escapeHtml(file.name)}</strong>
       <span>${Math.ceil(file.size_bytes / 1024)} KB - ${formatDate(file.updated_at)}</span>
@@ -896,7 +990,7 @@ function renderInventoryComparison(site) {
 
 function renderDeploymentArtifacts(site) {
   return `
-    <div class="button-row detail-actions"><button data-job="artifacts">Generate Artifacts</button><button class="secondary" data-refresh-artifacts="${escapeHtml(site.name)}">Refresh Files</button></div>
+    <div class="button-row detail-actions"><button data-job="artifacts">Generate Artifacts</button><button class="secondary" data-refresh-artifacts="${escapeHtml(site.name)}">Refresh Files</button><button class="secondary" data-download-bundle="${escapeHtml(site.name)}">Download ZIP</button></div>
     <div class="settings-list">
       ${state.artifacts.map((file) => `
         <div class="settings-row">
@@ -1015,6 +1109,69 @@ function renderIsos() {
   `).join("") || `<div class="settings-empty">No ISOs registered.</div>`;
 }
 
+function renderTemplates() {
+  if (!els.templateStrip) return;
+  els.templateStrip.innerHTML = state.templates.map((template) => `
+    <button class="template-card" data-template="${escapeHtml(template.id)}">
+      <strong>${escapeHtml(template.name)}</strong>
+      <span>${escapeHtml(template.description)}</span>
+      <small>${escapeHtml(template.platform)} - ${escapeHtml(template.nodes)} nodes</small>
+    </button>
+  `).join("") || `<div class="settings-empty">Templates unavailable.</div>`;
+}
+
+function renderTopology() {
+  if (!els.topologyMap) return;
+  if (!state.topology) {
+    els.topologyMap.innerHTML = `<div class="settings-empty">Select a site and refresh topology to view the deployment map.</div>`;
+    return;
+  }
+  const platform = state.topology.nodes.find((node) => node.type === "platform");
+  const networks = state.topology.nodes.filter((node) => node.type === "network");
+  const hosts = state.topology.nodes.filter((node) => node.type === "host");
+  els.topologyMap.innerHTML = `
+    <div class="topology-stage">
+      <div class="topology-node topology-platform">
+        <strong>${escapeHtml(platform?.label || "platform")}</strong>
+        <span>${escapeHtml(state.topology.topology || "custom topology")}</span>
+      </div>
+      <div class="topology-networks">
+        ${networks.map((network) => `<div class="topology-node topology-network"><strong>${escapeHtml(network.label)}</strong><span>network segment</span></div>`).join("")}
+      </div>
+      <div class="topology-hosts">
+        ${hosts.map((host) => `
+          <div class="topology-node topology-host">
+            <strong>${escapeHtml(host.label)}</strong>
+            <span>${escapeHtml(host.bmc_ip)} - ${escapeHtml(host.role || "host")}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderReleases() {
+  if (!els.releaseList) return;
+  els.releaseList.innerHTML = state.releases.map((release) => `
+    <article class="release-card">
+      <div class="panel-header">
+        <div>
+          <h2>${escapeHtml(release.version)}</h2>
+          <span>${escapeHtml(release.date || "No release date")}</span>
+        </div>
+      </div>
+      <div class="release-sections">
+        ${Object.entries(release.sections || {}).map(([section, items]) => `
+          <div>
+            <h3>${escapeHtml(section)}</h3>
+            <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `).join("") || `<div class="settings-empty">No changelog entries available.</div>`;
+}
+
 function renderAbout() {
   if (!els.aboutGrid) return;
   els.aboutGrid.innerHTML = `
@@ -1034,18 +1191,24 @@ function renderAbout() {
 
 function renderProviderMatrix() {
   if (!els.providerMatrix) return;
-  const capabilities = ["inventory", "power", "iso mount", "firmware", "deploy", "drift", "node replace"];
+  const compatibility = [...(state.compatibility?.hardware || []), ...(state.compatibility?.platform || [])];
+  const providers = compatibility.length ? compatibility : state.providers;
+  const capabilities = ["inventory", "power", "virtual_media", "firmware", "deploy", "drift", "node_replacement"];
   els.providerMatrix.innerHTML = `
     <div class="matrix-header">
-      <strong>Provider Capability Matrix</strong>
-      <span>Configuration and supported operation posture</span>
+      <strong>Hardware Compatibility & Provider Matrix</strong>
+      <span>Certification badges, vendor support, and supported operation posture</span>
     </div>
     <div class="capability-matrix">
-      <div class="matrix-row matrix-head"><span>Provider</span>${capabilities.map((capability) => `<span>${escapeHtml(capability)}</span>`).join("")}</div>
-      ${state.providers.map((provider) => `
+      <div class="matrix-row matrix-head"><span>Provider</span><span>Badges</span>${capabilities.map((capability) => `<span>${escapeHtml(labelize(capability))}</span>`).join("")}</div>
+      ${providers.map((provider) => `
         <div class="matrix-row">
           <span>${providerNameMarkup(provider)}</span>
-          ${capabilities.map((capability) => `<span class="${providerCapability(provider, capability) ? "status-succeeded" : "status-running"}">${providerCapability(provider, capability) ? "Yes" : "Planned"}</span>`).join("")}
+          <span class="badge-stack">${(provider.certification_badges || providerBadges(provider)).map((badge) => `<em>${escapeHtml(badge)}</em>`).join("")}</span>
+          ${capabilities.map((capability) => {
+            const supported = provider.capabilities ? Boolean(provider.capabilities[capability]) : providerCapability(provider, capability);
+            return `<span class="${supported ? "status-succeeded" : "status-running"}">${supported ? "Yes" : "Planned"}</span>`;
+          }).join("")}
         </div>
       `).join("")}
     </div>
@@ -1053,9 +1216,17 @@ function renderProviderMatrix() {
 }
 
 function providerCapability(provider, capability) {
-  if (provider.type === "hardware") return ["inventory", "power", "iso mount", "firmware"].includes(capability);
-  if (provider.name === "azure-local") return ["deploy", "drift", "node replace"].includes(capability);
+  if (provider.type === "hardware") return ["inventory", "power", "virtual_media", "firmware"].includes(capability);
+  if (provider.name === "azure-local") return ["deploy", "drift", "node_replacement"].includes(capability);
   return ["drift"].includes(capability);
+}
+
+function providerBadges(provider) {
+  return [
+    provider.editable ? "Plugin" : "StrataOne built-in",
+    provider.vendor_supported ? "Vendor supported" : "Community",
+    provider.type === "hardware" ? "Redfish/OEM" : "Platform",
+  ];
 }
 
 function renderApprovals() {
@@ -1366,6 +1537,34 @@ function renderSettingsSection(section, data) {
       </div>
     `;
   }
+  if (section === "notifications") {
+    return `
+      <div class="settings-grid">
+        ${settingCard("Teams", "webhook supported")}
+        ${settingCard("Slack", "webhook supported")}
+        ${settingCard("Email", "SMTP contract")}
+        ${settingCard("Generic Webhook", "JSON payload")}
+      </div>
+      <form class="settings-form" id="notificationTestForm">
+        <h3>Test Notification Integration</h3>
+        <div class="form-grid">
+          <label>Type
+            <select id="notificationType">
+              <option value="teams">Microsoft Teams</option>
+              <option value="slack">Slack</option>
+              <option value="email">Email</option>
+              <option value="webhook">Webhook</option>
+            </select>
+          </label>
+          <label>Name<input id="notificationName" value="operations" /></label>
+          <label class="span-form">Target<input id="notificationTarget" placeholder="https://hooks.example.com/strataone or ops@example.com" /></label>
+          <label class="span-form">Message<input id="notificationMessage" value="StrataOne notification test" /></label>
+          <label><input id="notificationSend" type="checkbox" /> Send live test</label>
+        </div>
+        <button type="submit">Validate Notification</button>
+      </form>
+    `;
+  }
   return `<div class="settings-grid">${Object.entries(data).map(([key, value]) => settingCard(labelize(key), formatSettingValue(value))).join("")}</div>`;
 }
 
@@ -1451,6 +1650,17 @@ async function handleDocumentActions(event) {
   const removeNode = event.target.closest("[data-remove-node]");
   if (removeNode) {
     removeDeploymentNode(Number(removeNode.dataset.removeNode));
+    return;
+  }
+  const template = event.target.closest("[data-template]");
+  if (template) {
+    const selected = state.templates.find((item) => item.id === template.dataset.template);
+    if (selected?.spec) {
+      hydrateDeploymentForm(selected.spec);
+      els.siteYaml.value = toYaml(selected.spec);
+      renderDeploymentSummary(selected.spec);
+      writeResult("template loaded", { template: selected.id, platform: selected.platform });
+    }
     return;
   }
   const lifecycle = event.target.closest("[data-lifecycle]");
@@ -1661,6 +1871,11 @@ async function handleDocumentActions(event) {
     await loadArtifacts(refreshArtifacts.dataset.refreshArtifacts);
     return;
   }
+  const downloadBundle = event.target.closest("[data-download-bundle]");
+  if (downloadBundle) {
+    downloadArtifactBundle(downloadBundle.dataset.downloadBundle);
+    return;
+  }
 }
 
 async function handleDocumentSubmit(event) {
@@ -1774,6 +1989,45 @@ async function handleDocumentSubmit(event) {
     await loadApprovals();
     return;
   }
+  if (event.target.id === "gitopsExportForm") {
+    event.preventDefault();
+    if (!state.selectedSite) {
+      writeResult("gitops export failed", { error: "select a site first" });
+      return;
+    }
+    const result = await apiPost("/gitops/export", {
+      site_name: state.selectedSite,
+      repository: value("#gitopsRepository") || null,
+      branch: value("#gitopsBranch") || "main",
+      path: value("#gitopsPath") || null,
+      format: "yaml",
+    });
+    writeResult("gitops export", result);
+    return;
+  }
+  if (event.target.id === "gitopsImportForm") {
+    event.preventDefault();
+    const result = await apiPost("/gitops/import", {
+      content: value("#gitopsImportContent"),
+      source: "dashboard",
+    });
+    writeResult("gitops import", result);
+    state.selectedSite = result.name;
+    await loadSites();
+    return;
+  }
+  if (event.target.id === "notificationTestForm") {
+    event.preventDefault();
+    const result = await apiPost("/notifications/test", {
+      type: value("#notificationType"),
+      name: value("#notificationName"),
+      target: value("#notificationTarget"),
+      message: value("#notificationMessage"),
+      send: checked("#notificationSend"),
+    });
+    writeResult("notification test", result);
+    return;
+  }
   if (event.target.id === "authLoginForm") {
     event.preventDefault();
     await loginWithPassword();
@@ -1873,28 +2127,39 @@ async function showProviderDetail(providerName) {
 
 function providerNameMarkup(provider) {
   const identity = providerIdentity(typeof provider === "string" ? provider : provider.name);
-  return `<span class="provider-name"><span class="vendor-mark ${escapeHtml(identity.className)}">${escapeHtml(identity.mark)}</span><span>${escapeHtml(identity.label)}</span></span>`;
+  return `
+    <span class="provider-name" title="${escapeHtml(identity.vendor)} provider badge">
+      <span class="vendor-badge ${escapeHtml(identity.className)}">
+        <span class="vendor-glyph">${escapeHtml(identity.mark)}</span>
+        <span class="vendor-wordmark">${escapeHtml(identity.vendor)}</span>
+      </span>
+      <span class="provider-label">
+        <span>${escapeHtml(identity.label)}</span>
+        <small>${escapeHtml(identity.family)}</small>
+      </span>
+    </span>
+  `;
 }
 
 function providerIdentity(name) {
   const normalized = String(name || "").toLowerCase();
   const known = {
-    "generic-redfish": ["RF", "Generic Redfish", "vendor-redfish"],
-    "dell-idrac": ["D", "Dell iDRAC", "vendor-dell"],
-    "hpe-ilo": ["HPE", "HPE iLO", "vendor-hpe"],
-    "lenovo-xclarity": ["L", "Lenovo XClarity", "vendor-lenovo"],
-    "supermicro-redfish": ["SM", "Supermicro Redfish", "vendor-supermicro"],
-    "cisco-intersight": ["C", "Cisco Intersight", "vendor-cisco"],
-    "azure-local": ["AZ", "Azure Local", "vendor-azure"],
-    "hyper-v": ["HV", "Hyper-V", "vendor-hyperv"],
-    "kvm": ["KVM", "KVM", "vendor-kvm"],
-    "nutanix-ahv": ["N", "Nutanix AHV", "vendor-nutanix"],
-    "openshift-virtualization": ["OS", "OpenShift Virtualization", "vendor-openshift"],
-    "proxmox": ["PX", "Proxmox", "vendor-proxmox"],
-    "vmware-vsphere": ["VM", "VMware vSphere", "vendor-vmware"],
+    "generic-redfish": ["RF", "Redfish", "Generic Redfish", "Vendor-neutral BMC", "vendor-redfish"],
+    "dell-idrac": ["D", "Dell", "Dell iDRAC", "OEM BMC provider", "vendor-dell"],
+    "hpe-ilo": ["HPE", "HPE", "HPE iLO", "OEM BMC provider", "vendor-hpe"],
+    "lenovo-xclarity": ["L", "Lenovo", "Lenovo XClarity", "OEM management provider", "vendor-lenovo"],
+    "supermicro-redfish": ["SM", "Supermicro", "Supermicro Redfish", "OEM BMC provider", "vendor-supermicro"],
+    "cisco-intersight": ["C", "Cisco", "Cisco Intersight", "OEM management provider", "vendor-cisco"],
+    "azure-local": ["AZ", "Microsoft", "Azure Local", "Platform provider", "vendor-azure"],
+    "hyper-v": ["HV", "Microsoft", "Hyper-V", "Platform provider", "vendor-hyperv"],
+    "kvm": ["KVM", "Linux", "KVM", "Platform provider", "vendor-kvm"],
+    "nutanix-ahv": ["N", "Nutanix", "Nutanix AHV", "Platform provider", "vendor-nutanix"],
+    "openshift-virtualization": ["OS", "Red Hat", "OpenShift Virtualization", "Platform provider", "vendor-openshift"],
+    "proxmox": ["PX", "Proxmox", "Proxmox", "Platform provider", "vendor-proxmox"],
+    "vmware-vsphere": ["VM", "VMware", "VMware vSphere", "Platform provider", "vendor-vmware"],
   };
-  const [mark, label, className] = known[normalized] || [normalized.slice(0, 2).toUpperCase() || "PR", name, "vendor-generic"];
-  return { mark, label, className };
+  const [mark, vendor, label, family, className] = known[normalized] || [normalized.slice(0, 2).toUpperCase() || "PR", "Custom", name, "Plugin provider", "vendor-generic"];
+  return { mark, vendor, label, family, className };
 }
 
 function formatSettingValue(value) {
@@ -1918,6 +2183,24 @@ async function openArtifactFile(fileName) {
   const file = await apiGet(`/sites/${encodeURIComponent(state.selectedSite)}/artifacts/files/${encodeURIComponent(fileName)}`);
   els.artifactOutput.textContent = file.content;
   writeResult("artifact file", { site: state.selectedSite, file: file.name });
+}
+
+async function downloadArtifactBundle(siteName) {
+  const response = await apiFetch(`/sites/${encodeURIComponent(siteName)}/artifacts/bundle.zip`);
+  if (!response.ok) {
+    writeResult("artifact bundle failed", { site: siteName, status: response.status });
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${siteName}-strataone-artifacts.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  writeResult("artifact bundle downloaded", { site: siteName, size_bytes: blob.size });
 }
 
 function renderMetrics() {
@@ -2340,6 +2623,14 @@ function clearAuthState(userLabel = "anonymous") {
 function renderAuthState() {
   els.userChip.innerHTML = `${escapeHtml(state.authToken ? state.authUser : "anonymous")} <span>${state.authToken ? "token" : "no token"}</span>`;
   document.querySelector("#logoutButton").textContent = state.authToken ? "Logout" : "Login";
+  document.querySelector("#themeToggle").textContent = state.theme === "dark" ? "Light" : "Dark";
+}
+
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+  localStorage.setItem("strataone.theme", state.theme);
+  renderAuthState();
 }
 
 function requestAuthToken() {

@@ -18,6 +18,22 @@
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
 }
 
+[data-theme="light"] {
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --panel-soft: #f8fafd;
+  --panel-strong: #eef2fb;
+  --ink: #111827;
+  --muted: #647089;
+  --line: #d8deea;
+  --line-strong: #c6cfdf;
+  --nav: #111827;
+  --nav-2: #1f2937;
+  --accent: #4f46d9;
+  --accent-dark: #3730a3;
+  --shadow: 0 16px 36px rgba(15, 23, 42, 0.12);
+}
+
 * { box-sizing: border-box; }
 
 [hidden] { display: none !important; }
@@ -77,6 +93,10 @@ button.mini {
   font-size: 12px;
   min-height: 28px;
   padding: 0 9px;
+}
+
+.icon-button {
+  min-width: 72px;
 }
 
 .app-shell {
@@ -189,6 +209,108 @@ button.mini {
 .nav-item.active svg,
 .nav-item:hover svg {
   color: white;
+}
+
+.template-strip {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  padding: 14px 16px;
+}
+
+.template-card,
+.topology-node {
+  background: var(--panel-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-height: auto;
+  padding: 12px;
+  text-align: left;
+}
+
+.template-card:hover {
+  border-color: var(--teal);
+}
+
+.template-card small,
+.topology-node span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.topology-map {
+  min-height: 220px;
+}
+
+.topology-stage {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.topology-platform {
+  border-color: var(--teal);
+}
+
+.topology-networks,
+.topology-hosts,
+.gitops-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.badge-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.badge-stack em {
+  background: rgba(68, 212, 164, 0.12);
+  border: 1px solid rgba(68, 212, 164, 0.35);
+  border-radius: 999px;
+  color: var(--teal);
+  font-size: 11px;
+  font-style: normal;
+  padding: 3px 7px;
+}
+
+.release-list {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.release-card {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.release-card .panel-header {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+}
+
+.release-sections {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  padding: 16px;
+}
+
+.release-sections ul {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 8px 0 0;
+  padding-left: 18px;
 }
 
 .sidebar-footer {
@@ -782,6 +904,16 @@ textarea {
   gap: 12px;
 }
 
+.provider-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 88%, transparent), var(--panel-soft));
+  min-height: 76px;
+}
+
+.provider-card > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
 .job-main {
   background: transparent;
   border: 0;
@@ -797,47 +929,85 @@ textarea {
 .provider-title {
   align-items: center;
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .provider-name {
   align-items: center;
   display: inline-flex;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
-.vendor-mark {
+.vendor-badge {
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 8px 18px rgba(0, 0, 0, 0.14);
   color: #ffffff;
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 800;
-  height: 24px;
-  justify-content: center;
+  height: 34px;
   letter-spacing: 0;
   line-height: 1;
-  min-width: 24px;
-  padding: 0 5px;
+  min-width: 108px;
+  overflow: hidden;
 }
 
-.vendor-redfish { background: #405c68; }
-.vendor-dell { background: #0875be; }
-.vendor-hpe { background: #008767; }
-.vendor-lenovo { background: #b91c35; }
-.vendor-supermicro { background: #2f5f9f; }
-.vendor-cisco { background: #1f8cc6; }
-.vendor-azure { background: #2563eb; }
-.vendor-hyperv { background: #355c9a; }
-.vendor-kvm { background: #5b556d; }
-.vendor-nutanix { background: #1f7a63; }
-.vendor-openshift { background: #c7392f; }
-.vendor-proxmox { background: #d05a22; }
-.vendor-vmware { background: #6b7280; }
-.vendor-generic { background: #4a4567; }
+.vendor-glyph {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.18);
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 900;
+  height: 100%;
+  justify-content: center;
+  min-width: 34px;
+  padding: 0 7px;
+}
+
+.vendor-wordmark {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  justify-content: center;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.provider-label {
+  display: grid;
+  gap: 2px;
+}
+
+.provider-label > span {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.provider-label small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.vendor-redfish { background: linear-gradient(135deg, #314b57, #5c7480); }
+.vendor-dell { background: linear-gradient(135deg, #0076ce, #21a4e8); }
+.vendor-hpe { background: linear-gradient(135deg, #008567, #00b388); }
+.vendor-lenovo { background: linear-gradient(135deg, #9f1239, #e11d48); }
+.vendor-supermicro { background: linear-gradient(135deg, #1e4f8f, #3b82c4); }
+.vendor-cisco { background: linear-gradient(135deg, #0f6ea4, #1ba6d9); }
+.vendor-azure { background: linear-gradient(135deg, #0078d4, #50a7f4); }
+.vendor-hyperv { background: linear-gradient(135deg, #24559c, #5b8edb); }
+.vendor-kvm { background: linear-gradient(135deg, #3f3a4f, #737083); }
+.vendor-nutanix { background: linear-gradient(135deg, #0f6b57, #20a17f); }
+.vendor-openshift { background: linear-gradient(135deg, #b91c1c, #e44d3a); }
+.vendor-proxmox { background: linear-gradient(135deg, #c2410c, #f97316); }
+.vendor-vmware { background: linear-gradient(135deg, #4b5563, #8b95a5); }
+.vendor-generic { background: linear-gradient(135deg, #403a5f, #69608e); }
 
 .job-item:hover,
 .fleet-card:hover { background: #25213b; }
@@ -1106,14 +1276,17 @@ textarea {
 }
 
 .matrix-row {
+  align-items: stretch;
   display: grid;
   gap: 10px;
-  grid-template-columns: 180px repeat(7, minmax(86px, 1fr));
-  min-width: 820px;
+  grid-template-columns: 300px 270px repeat(7, minmax(92px, 1fr));
+  min-width: 1280px;
 }
 
 .matrix-row span {
+  align-items: center;
   border-bottom: 1px solid var(--line);
+  display: flex;
   font-size: 12px;
   padding: 10px;
 }

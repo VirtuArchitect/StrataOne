@@ -1,12 +1,15 @@
 import os
 import time
+import io
+import json
+import zipfile
 from ipaddress import ip_network
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
@@ -21,7 +24,7 @@ from strataone.preflight import PreflightRunner
 from strataone.providers.registry import ProviderInfo, delete_plugin_provider, list_providers, upsert_plugin_provider
 from strataone.queue import queue_backend
 from strataone.redfish import RedfishClient
-from strataone.security import ALL_PERMISSIONS, AuthContext, RateLimitMiddleware, SecurityHeadersMiddleware, auth_enabled, cors_origins, create_password_hash, new_session_token, rate_limit_enabled, require_permission, security_headers, session_expiry, token_hash, verify_password, _bearer_token
+from strataone.security import ALL_PERMISSIONS, AuthContext, RateLimitMiddleware, SecurityHeadersMiddleware, authenticate, auth_enabled, cors_origins, create_password_hash, new_session_token, rate_limit_enabled, require_permission, security_headers, session_expiry, token_hash, verify_password, _bearer_token
 from strataone.secrets import BmcSecret, resolve_bmc_credentials_from_ref
 from strataone.store import RoleRecord, StrataStore, UserRecord, spec_from_record
 from strataone.state import SiteSpec, load_site_spec
@@ -146,6 +149,29 @@ class ArtifactFileRecord(BaseModel):
     path: str
     size_bytes: int
     updated_at: str
+
+
+class NotificationTestPayload(BaseModel):
+    type: str
+    name: str = "default"
+    target: str
+    enabled: bool = True
+    send: bool = False
+    message: str = "StrataOne notification test"
+
+
+class GitOpsExportPayload(BaseModel):
+    site_name: str
+    format: str = "yaml"
+    repository: str | None = None
+    branch: str = "main"
+    path: str | None = None
+
+
+class GitOpsImportPayload(BaseModel):
+    content: str | None = None
+    site: dict[str, Any] | None = None
+    source: str = "dashboard"
 
 
 store = StrataStore()
@@ -757,6 +783,100 @@ def oem_validation(_: Any = read_settings) -> dict[str, Any]:
     return validation_summary()
 
 
+@app.get("/templates")
+def deployment_templates(_: Any = read_sites) -> dict[str, Any]:
+    return {"templates": _deployment_templates()}
+
+
+@app.get("/compatibility")
+def compatibility_matrix(_: Any = read_providers) -> dict[str, Any]:
+    providers = list_providers()
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "hardware": [_compatibility_record(provider) for provider in providers if provider.type == "hardware"],
+        "platform": [_compatibility_record(provider) for provider in providers if provider.type == "platform"],
+        "certifications": [
+            {"name": "StrataOne built-in", "meaning": "Provider contract ships with the product."},
+            {"name": "Vendor supported", "meaning": "Provider is aligned to a named vendor/OEM integration path."},
+            {"name": "Lab validated", "meaning": "Live execution evidence has been recorded for one or more operations."},
+            {"name": "Approval gated", "meaning": "Live-impact actions require an approved request before execution."},
+        ],
+    }
+
+
+@app.get("/releases")
+def releases(_: Any = read_sites) -> dict[str, Any]:
+    return {"releases": _release_notes()}
+
+
+@app.post("/notifications/test")
+def test_notification(payload: NotificationTestPayload, context: AuthContext = manage_settings) -> dict[str, Any]:
+    if payload.type not in {"teams", "slack", "email", "webhook"}:
+        raise HTTPException(status_code=422, detail="notification type must be teams, slack, email, or webhook")
+    result = {
+        "name": payload.name.strip() or payload.type,
+        "type": payload.type,
+        "target": _redact_notification_target(payload.target),
+        "enabled": payload.enabled,
+        "mode": "sent" if payload.send else "validated",
+        "status": "ready",
+        "message": payload.message,
+    }
+    if payload.send:
+        if payload.type in {"teams", "slack", "webhook"}:
+            try:
+                response = requests.post(payload.target, json={"text": payload.message, "source": "StrataOne"}, timeout=5)
+                result["http_status"] = response.status_code
+                result["status"] = "sent" if response.status_code < 400 else "failed"
+            except Exception as exc:
+                result["status"] = "failed"
+                result["error"] = str(exc)
+        else:
+            result["status"] = "planned"
+            result["note"] = "SMTP delivery is configured as an operator integration contract."
+    store.add_audit(context.username, "notification.test", f"notification:{payload.type}:{payload.name}", result)
+    return result
+
+
+@app.post("/gitops/export")
+def gitops_export(payload: GitOpsExportPayload, context: AuthContext = read_sites) -> dict[str, Any]:
+    site = store.get_site(payload.site_name, _tenant_scope(context))
+    if site is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    spec = spec_from_record(site).model_dump(mode="json")
+    if payload.format not in {"yaml", "json"}:
+        raise HTTPException(status_code=422, detail="format must be yaml or json")
+    file_name = f"{site.name}.{'yaml' if payload.format == 'yaml' else 'json'}"
+    path = payload.path or f"sites/{file_name}"
+    content = _site_to_yaml(spec) if payload.format == "yaml" else json.dumps(spec, indent=2)
+    result = {
+        "mode": "repo-ready-export",
+        "repository": payload.repository,
+        "branch": payload.branch,
+        "path": path,
+        "site_name": site.name,
+        "format": payload.format,
+        "files": [{"path": path, "content": content}],
+        "next_actions": ["Commit the exported file to the GitOps repository.", "Run import or CI validation against the desired-state contract."],
+    }
+    store.add_audit(context.username, "gitops.export", f"site:{site.name}", {"path": path, "format": payload.format})
+    return result
+
+
+@app.post("/gitops/import")
+def gitops_import(payload: GitOpsImportPayload, context: AuthContext = write_sites) -> dict[str, Any]:
+    if payload.site:
+        spec = SiteSpec.model_validate(payload.site)
+    elif payload.content:
+        parsed = _parse_simple_yaml(payload.content) if "site:" in payload.content else json.loads(payload.content)
+        spec = SiteSpec.model_validate(parsed)
+    else:
+        raise HTTPException(status_code=422, detail="site or content is required")
+    record = store.upsert_site(spec, tenant_id=_tenant_scope(context))
+    store.add_audit(context.username, "gitops.import", f"site:{record.name}", {"source": payload.source})
+    return record.model_dump(mode="json")
+
+
 @app.post("/access/users")
 def create_or_update_user(payload: UserPayload, _: Any = manage_access) -> dict[str, Any]:
     if not payload.username.strip():
@@ -810,6 +930,40 @@ def get_site_record(site_name: str, context: AuthContext = read_sites) -> dict[s
     if site is None:
         raise HTTPException(status_code=404, detail="site not found")
     return site.model_dump(mode="json")
+
+
+@app.get("/sites/{site_name}/topology")
+def site_topology(site_name: str, context: AuthContext = read_sites) -> dict[str, Any]:
+    site = store.get_site(site_name, _tenant_scope(context))
+    if site is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    spec = spec_from_record(site)
+    nodes = [
+        {"id": f"node:{node.serial}", "label": node.serial, "type": "host", "bmc_ip": node.bmc_ip, "role": node.role}
+        for node in spec.hardware.nodes
+    ]
+    networks = [
+        {"id": "network:management", "label": f"Mgmt VLAN {spec.network.management_vlan}", "type": "network"},
+        {"id": "network:storage", "label": f"Storage VLAN {spec.network.storage_vlan}", "type": "network"},
+        {"id": "network:vm", "label": f"VM VLAN {spec.network.vm_vlan}", "type": "network"},
+    ]
+    return {
+        "site_name": site.name,
+        "topology": spec.platform.topology,
+        "nodes": [
+            {"id": "platform", "label": spec.platform.type.value, "type": "platform", "topology": spec.platform.topology},
+            *networks,
+            *nodes,
+        ],
+        "links": [
+            *[{"source": "platform", "target": network["id"], "type": "uses"} for network in networks],
+            *[
+                {"source": f"node:{node.serial}", "target": network["id"], "type": "connected"}
+                for node in spec.hardware.nodes
+                for network in networks
+            ],
+        ],
+    }
 
 
 @app.delete("/sites/{site_name}")
@@ -941,6 +1095,43 @@ def stream_job_events(job_id: str, _: Any = read_jobs) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.websocket("/jobs/{job_id}/events/ws")
+async def websocket_job_events(websocket: WebSocket, job_id: str, token: str | None = Query(default=None)) -> None:
+    await websocket.accept()
+    try:
+        if auth_enabled():
+            try:
+                context = authenticate(f"Bearer {token}" if token else None, store)
+            except HTTPException as exc:
+                await websocket.send_json({"type": "error", "status": exc.status_code, "detail": exc.detail})
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            if "*" not in context.permissions and "read-jobs" not in context.permissions:
+                await websocket.send_json({"type": "error", "status": 403, "detail": "permission required: read-jobs"})
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        seen: set[str] = set()
+        for _ in range(120):
+            events = store.list_job_events(job_id)
+            for event in events:
+                if event.id in seen:
+                    continue
+                seen.add(event.id)
+                await websocket.send_json({"type": "job-event", "event": event.model_dump(mode="json")})
+            job = store.get_job(job_id)
+            if job and job.status in {"succeeded", "failed", "canceled"} and all(event.id in seen for event in events):
+                await websocket.send_json({"type": "job-complete", "job": job.model_dump(mode="json")})
+                break
+            time.sleep(1)
+    except WebSocketDisconnect:
+        return
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @app.get("/audit")
 def list_audit_log(limit: int = 100, _: Any = read_audit) -> dict[str, Any]:
     return {"audit": [item.model_dump(mode="json") for item in store.list_audit(limit)]}
@@ -1020,6 +1211,23 @@ def get_artifact_file(site_name: str, file_name: str, _: Any = read_sites) -> di
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="artifact file not found")
     return {"site_name": site_name, "name": file_name, "content": path.read_text(encoding="utf-8")}
+
+
+@app.get("/sites/{site_name}/artifacts/bundle.zip")
+def download_artifact_bundle(site_name: str, _: Any = read_sites) -> StreamingResponse:
+    if store.get_site(site_name) is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    site_dir = _artifact_site_dir(site_name)
+    if not site_dir.exists():
+        raise HTTPException(status_code=404, detail="artifact bundle not generated")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(site_dir.iterdir()):
+            if path.is_file():
+                archive.write(path, arcname=path.name)
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{site_name}-strataone-artifacts.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 
 @app.get("/sites/{site_name}/inventory")
@@ -1230,6 +1438,156 @@ def _candidate_serial(candidate: dict[str, Any], index: int) -> str:
     value = candidate.get("serial") or candidate.get("uuid") or candidate.get("bmc_ip") or f"node-{index}"
     serial = "".join(char if char.isalnum() or char in "_.:-" else "-" for char in str(value))
     return serial[:64] or f"node-{index}"
+
+
+def _deployment_templates() -> list[dict[str, Any]]:
+    base = load_site_spec(Path("examples/azure-local-branch.yaml")).model_dump(mode="json")
+    templates = [
+        ("azure-local-branch", "Azure Local Branch", "Two-node Azure Local branch or edge deployment.", base),
+        ("vsphere-cluster", "vSphere Cluster", "Two-host vSphere cluster with shared management/storage intent.", _template_variant(base, "vmware-vsphere", "vsphere-cluster", "vcenter-cluster", "private-cloud")),
+        ("proxmox-lab", "Proxmox Lab", "Compact Proxmox VE lab cluster using Redfish hardware discovery.", _template_variant(base, "proxmox", "proxmox-lab", "px-lab-001", "lab")),
+        ("ahv-edge", "AHV Edge", "Nutanix AHV edge cluster aligned to Prism-managed operations.", _template_variant(base, "nutanix-ahv", "ahv-edge", "ahv-edge-001", "edge-hci")),
+        ("hyper-v-cluster", "Hyper-V Cluster", "Windows virtualization cluster target for Hyper-V estates.", _template_variant(base, "hyper-v", "hyper-v-cluster", "hv-cluster-001", "private-cloud")),
+        ("openshift-virtualization", "OpenShift Virtualization", "Kubernetes-native virtualization target for OpenShift estates.", _template_variant(base, "openshift-virtualization", "ocp-virt", "ocp-virt-001", "private-cloud")),
+    ]
+    return [
+        {
+            "id": template_id,
+            "name": name,
+            "description": description,
+            "use_case": spec["site"]["deployment_model"],
+            "hardware_provider": spec["hardware"]["vendor"],
+            "platform": spec["platform"]["type"],
+            "nodes": len(spec["hardware"]["nodes"]),
+            "spec": spec,
+        }
+        for template_id, name, description, spec in templates
+    ]
+
+
+def _template_variant(base: dict[str, Any], platform: str, site_name: str, cluster_name: str, deployment_model: str) -> dict[str, Any]:
+    spec = json.loads(json.dumps(base))
+    spec["site"]["name"] = site_name
+    spec["site"]["deployment_model"] = deployment_model
+    spec["platform"]["type"] = platform
+    spec["platform"]["cluster_name"] = cluster_name
+    spec["platform"]["topology"] = "two-node-cluster" if platform != "proxmox" else "two-node-lab"
+    spec["workloads"]["kubernetes"] = platform == "openshift-virtualization"
+    spec["workloads"]["aks"] = platform == "azure-local"
+    return spec
+
+
+def _compatibility_record(provider: ProviderInfo) -> dict[str, Any]:
+    validation = store.list_provider_validation(provider.name)
+    badges = []
+    if not provider.editable:
+        badges.append("StrataOne built-in")
+    if provider.vendor_supported:
+        badges.append("Vendor supported")
+    if any(item.status == "validated" for item in validation):
+        badges.append("Lab validated")
+    badges.append("Approval gated" if provider.type == "platform" or "redfish" in provider.name or provider.name in {"dell-idrac", "hpe-ilo", "lenovo-xclarity"} else "Read-only capable")
+    return {
+        "name": provider.name,
+        "type": provider.type,
+        "source": provider.source,
+        "description": provider.description,
+        "vendor_supported": provider.vendor_supported,
+        "built_in": not provider.editable,
+        "lab_validated_operations": [item.operation for item in validation if item.status == "validated"],
+        "certification_badges": badges,
+        "capabilities": {
+            "inventory": provider.type == "hardware",
+            "power": provider.type == "hardware",
+            "virtual_media": provider.type == "hardware",
+            "firmware": provider.type == "hardware",
+            "deploy": provider.type == "platform",
+            "drift": provider.type == "platform",
+            "node_replacement": provider.type == "platform" and provider.name in {"azure-local", "vmware-vsphere", "nutanix-ahv"},
+        },
+    }
+
+
+def _release_notes() -> list[dict[str, Any]]:
+    changelog = Path("CHANGELOG.md")
+    if not changelog.exists():
+        return []
+    releases: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    section = "Notes"
+    for raw in changelog.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("## ["):
+            if current:
+                releases.append(current)
+            title = line.removeprefix("## [").split("]", 1)[0]
+            date = line.split(" - ", 1)[1] if " - " in line else None
+            current = {"version": title, "date": date, "sections": {}}
+            section = "Notes"
+        elif current and line.startswith("### "):
+            section = line.removeprefix("### ").strip()
+            current["sections"].setdefault(section, [])
+        elif current and line.startswith("- "):
+            current["sections"].setdefault(section, []).append(line[2:])
+    if current:
+        releases.append(current)
+    return releases
+
+
+def _site_to_yaml(value: Any, indent: int = 0) -> str:
+    pad = " " * indent
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, dict):
+                first_key, first_value = next(iter(item.items()))
+                if isinstance(first_value, (dict, list)):
+                    lines.append(f"{pad}- {first_key}:")
+                    lines.append(_site_to_yaml(first_value, indent + 4))
+                else:
+                    lines.append(f"{pad}- {first_key}: {first_value}")
+                for key, nested in list(item.items())[1:]:
+                    if isinstance(nested, (dict, list)):
+                        lines.append(f"{pad}  {key}:")
+                        lines.append(_site_to_yaml(nested, indent + 4))
+                    else:
+                        lines.append(f"{pad}  {key}: {nested}")
+            else:
+                lines.append(f"{pad}- {item}")
+        return "\n".join(lines)
+    if isinstance(value, dict):
+        if not value:
+            return f"{pad}{{}}"
+        lines = []
+        for key, item in value.items():
+            if item is None:
+                lines.append(f"{pad}{key}: null")
+                continue
+            if isinstance(item, dict) and not item:
+                lines.append(f"{pad}{key}: {{}}")
+                continue
+            if isinstance(item, (dict, list)):
+                lines.append(f"{pad}{key}:")
+                lines.append(_site_to_yaml(item, indent + 2))
+            else:
+                lines.append(f"{pad}{key}: {item}")
+        return "\n".join(lines)
+    return f"{pad}{value}"
+
+
+def _parse_simple_yaml(content: str) -> dict[str, Any]:
+    import yaml
+
+    return yaml.safe_load(content) or {}
+
+
+def _redact_notification_target(target: str) -> str:
+    if "@" in target and not target.startswith("http"):
+        name, _, domain = target.partition("@")
+        return f"{name[:2]}***@{domain}"
+    if target.startswith("http"):
+        return target.split("?", 1)[0]
+    return "***"
 
 
 def _artifact_site_dir(site_name: str) -> Path:

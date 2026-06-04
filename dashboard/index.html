@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
     <link rel="icon" href="./assets/veridian-mark-teal.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260604-v020" />
+    <link rel="stylesheet" href="./styles.css?v=20260604-v031" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -39,6 +39,9 @@
       <symbol id="icon-about" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7h.01"></path>
       </symbol>
+      <symbol id="icon-releases" viewBox="0 0 24 24">
+        <path d="M4 5h16"></path><path d="M6 9h12"></path><path d="M6 13h8"></path><path d="M6 17h10"></path><path d="m18 15 2 2 3-4"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <aside class="sidebar">
@@ -50,7 +53,7 @@
           </div>
         </div>
 
-        <div class="install-pill"><span></span> Framework installed</div>
+        <div class="install-pill"><span></span> Control plane online</div>
 
         <nav class="primary-nav" aria-label="Primary">
           <span class="nav-group">Overview</span>
@@ -67,6 +70,7 @@
           <span class="nav-group">Admin</span>
           <button class="nav-item" data-view="settings"><svg><use href="#icon-settings"></use></svg><span>Settings</span></button>
           <button class="nav-item" data-view="about"><svg><use href="#icon-about"></use></svg><span>About</span></button>
+          <button class="nav-item" data-view="releases"><svg><use href="#icon-releases"></use></svg><span>Releases</span></button>
         </nav>
         <div class="sidebar-footer">
           <strong>StrataOne Orchestrator</strong>
@@ -83,6 +87,7 @@
           <div class="topbar-actions">
             <div class="status-pill" id="apiStatus">API: checking</div>
             <div class="user-chip">j.goulden <span>admin</span></div>
+            <button class="secondary icon-button" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">Theme</button>
             <button class="secondary" id="logoutButton">Logout</button>
             <button id="newDeploymentTop">New Deployment</button>
             <button class="secondary" id="refreshAll">Refresh</button>
@@ -171,6 +176,8 @@
                 <button class="step" data-step="network">4 Network</button>
                 <button class="step" data-step="review">5 Review</button>
               </div>
+
+              <div class="template-strip" id="templateStrip"></div>
 
               <div class="wizard-page active" data-page="intent">
                 <div class="form-grid">
@@ -379,6 +386,40 @@
                 </div>
               </form>
               <div class="settings-list" id="discoveryList"></div>
+            </div>
+
+            <div class="panel span-12">
+              <div class="panel-header">
+                <div>
+                  <h2>Topology Map</h2>
+                  <span>Desired nodes, platform, and network intent for the selected site</span>
+                </div>
+                <button class="secondary" id="refreshTopology">Refresh Topology</button>
+              </div>
+              <div class="topology-map" id="topologyMap"></div>
+            </div>
+
+            <div class="panel span-12">
+              <div class="panel-header">
+                <div>
+                  <h2>GitOps Import / Export</h2>
+                  <span>Prepare site definitions for repository-backed desired state</span>
+                </div>
+              </div>
+              <div class="gitops-grid">
+                <form class="settings-form" id="gitopsExportForm">
+                  <h3>Export Selected Site</h3>
+                  <label>Repository URL<input id="gitopsRepository" placeholder="https://github.com/org/infra-gitops.git" /></label>
+                  <label>Branch<input id="gitopsBranch" value="main" /></label>
+                  <label>Path<input id="gitopsPath" placeholder="sites/branch-001.yaml" /></label>
+                  <button type="submit">Generate Export</button>
+                </form>
+                <form class="settings-form" id="gitopsImportForm">
+                  <h3>Import Definition</h3>
+                  <textarea id="gitopsImportContent" spellcheck="false" placeholder="Paste site JSON or YAML"></textarea>
+                  <button type="submit">Import Site</button>
+                </form>
+              </div>
             </div>
           </div>
         </section>
@@ -591,6 +632,7 @@
               <button class="settings-tab" data-settings-section="database">Database</button>
               <button class="settings-tab" data-settings-section="providers">Providers</button>
               <button class="settings-tab" data-settings-section="api">API</button>
+              <button class="settings-tab" data-settings-section="notifications">Notifications</button>
               <button class="settings-tab" data-settings-section="artifacts">Artifacts</button>
               <button class="settings-tab" data-settings-section="audit">Audit</button>
             </aside>
@@ -658,6 +700,19 @@
             </div>
           </div>
         </section>
+
+        <section class="view" id="view-releases" hidden>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Release Page</h2>
+                <span>Dashboard view of StrataOne changelog entries</span>
+              </div>
+              <button class="secondary" id="refreshReleases">Refresh Releases</button>
+            </div>
+            <div class="release-list" id="releaseList"></div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -676,6 +731,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260604-v020"></script>
+    <script src="./app.js?v=20260604-v031"></script>
   </body>
 </html>

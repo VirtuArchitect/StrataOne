@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "strataone"
-version = "0.2.0"
+version = "0.3.0"
 description = "Vendor-agnostic, hypervisor-agnostic zero-touch orchestration for distributed infrastructure."
 readme = "README.md"
 requires-python = ">=3.11"

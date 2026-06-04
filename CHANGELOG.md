@@ -6,6 +6,27 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 
 ## [Unreleased]
 
+## [0.3.0-preview] - 2026-06-04
+
+### Added
+
+- Dashboard light/dark theme switch with persisted operator preference.
+- Enterprise-style vendor logo badges for hardware and platform providers.
+- Guided deployment templates for Azure Local branch, vSphere cluster, Proxmox lab, AHV edge, Hyper-V cluster, and OpenShift Virtualization use cases.
+- Site topology map endpoint and dashboard topology view for platform, network, and node relationships.
+- Hardware compatibility and provider certification matrix with built-in, vendor-supported, lab-validated, and approval-gated badges.
+- Artifact ZIP download endpoint and dashboard bundle download action.
+- WebSocket job event streaming with SSE fallback for live job logs.
+- Notification integration test endpoint and settings UI for Teams, Slack, email, and generic webhooks.
+- GitOps import/export contracts for site desired-state definitions.
+- Terraform, Bicep, and Ansible integration output files in generated artifact bundles.
+- Dashboard release page backed by `CHANGELOG.md`.
+
+### Changed
+
+- Artifact bundles now include IaC handoff scaffolds in addition to manifest, plan, preflight, network, and site-spec outputs.
+- Dashboard provider matrix now uses backend compatibility evidence where available.
+
 ## [0.2.0-preview] - 2026-06-04
 
 ### Added
