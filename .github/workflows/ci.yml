@@ -28,6 +28,12 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
+      - name: Audit Python dependencies
+        run: python -m pip_audit --skip-editable
+
+      - name: Static security scan
+        run: python -m bandit -r src --severity-level high
+
   docker:
     runs-on: ubuntu-latest
     needs: test

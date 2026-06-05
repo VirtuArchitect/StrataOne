@@ -26,8 +26,8 @@ const state = {
   jobFilter: "all",
   selectedHardware: "generic-redfish",
   selectedPlatform: "azure-local",
-  authToken: localStorage.getItem("strataone.authToken") || "",
-  authUser: localStorage.getItem("strataone.authUser") || "operator",
+  authToken: sessionStorage.getItem("strataone.authToken") || "",
+  authUser: sessionStorage.getItem("strataone.authUser") || "operator",
   activeView: "overview",
   activeStep: "intent",
   theme: localStorage.getItem("strataone.theme") || "dark",
@@ -748,11 +748,14 @@ async function streamJobEvents(jobId) {
     state.eventSocket.close();
     state.eventSocket = null;
   }
+  if (state.authToken) {
+    await streamJobEventsSse(jobId);
+    return;
+  }
   if (window.WebSocket) {
     const base = new URL(apiBase);
     base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
     base.pathname = `/jobs/${encodeURIComponent(jobId)}/events/ws`;
-    if (state.authToken) base.searchParams.set("token", state.authToken);
     try {
       const socket = new WebSocket(base.toString());
       state.eventSocket = socket;
@@ -2616,8 +2619,8 @@ function logout() {
 function clearAuthState(userLabel = "anonymous") {
   state.authToken = "";
   state.authUser = userLabel;
-  localStorage.removeItem("strataone.authToken");
-  localStorage.setItem("strataone.authUser", state.authUser);
+  sessionStorage.removeItem("strataone.authToken");
+  sessionStorage.setItem("strataone.authUser", state.authUser);
 }
 
 function renderAuthState() {
@@ -2665,8 +2668,8 @@ async function loginWithPassword() {
   const session = await response.json();
   state.authToken = session.token;
   state.authUser = session.display_name || session.username;
-  localStorage.setItem("strataone.authToken", state.authToken);
-  localStorage.setItem("strataone.authUser", state.authUser);
+  sessionStorage.setItem("strataone.authToken", state.authToken);
+  sessionStorage.setItem("strataone.authUser", state.authUser);
   hideAuthModal();
   renderAuthState();
   await refreshAll();

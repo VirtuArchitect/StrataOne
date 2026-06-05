@@ -22,7 +22,7 @@ class ArtifactGenerator:
         self.output_root = output_root or Path(os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts"))
 
     def generate(self, spec: SiteSpec) -> ArtifactBundle:
-        site_dir = self.output_root / spec.site.name
+        site_dir = self._site_dir(spec.site.name)
         site_dir.mkdir(parents=True, exist_ok=True)
 
         plan = Orchestrator().plan(spec).model_dump(mode="json")
@@ -54,6 +54,13 @@ class ArtifactGenerator:
             written.append(str(path))
 
         return ArtifactBundle(site_name=spec.site.name, output_dir=str(site_dir), files=written)
+
+    def _site_dir(self, site_name: str) -> Path:
+        root = self.output_root.resolve()
+        site_dir = (root / site_name).resolve()
+        if root != site_dir and root not in site_dir.parents:
+            raise ValueError("artifact output path escapes artifact root")
+        return site_dir
 
     def _manifest(self, spec: SiteSpec) -> dict[str, Any]:
         return {

@@ -50,7 +50,7 @@ def test_notification_and_gitops_contracts() -> None:
 
     notification = client.post(
         "/notifications/test",
-        json={"type": "webhook", "name": "ops", "target": "https://hooks.example.com/strataone", "send": False},
+        json={"type": "webhook", "name": "ops", "target": "https://example.com/strataone", "send": False},
     )
     export = client.post("/gitops/export", json={"site_name": "branch-001", "format": "yaml", "path": "sites/branch-001.yaml"})
     imported = client.post("/gitops/import", json={"content": export.json()["files"][0]["content"], "source": "test"})

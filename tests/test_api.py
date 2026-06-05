@@ -334,7 +334,7 @@ def test_iso_registry_round_trips() -> None:
 
 def test_iso_validation_updates_status(monkeypatch) -> None:
     client = TestClient(app)
-    client.post("/isos", json={"name": "validate-iso", "uri": "https://repo.example.com/validate.iso"})
+    client.post("/isos", json={"name": "validate-iso", "uri": "https://example.com/validate.iso"})
 
     class Response:
         status_code = 200
@@ -562,6 +562,16 @@ def test_inventory_can_be_saved_and_returned() -> None:
 def test_auth_enforcement_rejects_missing_token(monkeypatch) -> None:
     monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
     monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "test-bootstrap")
+    client = TestClient(app)
+
+    response = client.get("/sites")
+
+    assert response.status_code == 401
+
+
+def test_auth_enforcement_defaults_to_enabled(monkeypatch) -> None:
+    monkeypatch.delenv("STRATAONE_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("STRATAONE_AUTH_REQUIRED", raising=False)
     client = TestClient(app)
 
     response = client.get("/sites")

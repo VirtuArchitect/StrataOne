@@ -21,6 +21,7 @@ Create or update `.env`:
 
 ```text
 STRATAONE_AUTH_ENABLED=true
+STRATAONE_ENVIRONMENT=production
 STRATAONE_ADMIN_PASSWORD=ChangeThisPassword!2026
 STRATAONE_CORS_ORIGINS=http://localhost:8088,http://127.0.0.1:8088
 STRATAONE_STATE_BACKEND=postgres
@@ -134,4 +135,3 @@ docker compose ps
 ```
 
 Schema migrations are tracked in Settings > Database/Migrations.
-

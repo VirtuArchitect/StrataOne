@@ -45,6 +45,15 @@ class SiteIdentity(BaseModel):
     location: str
     deployment_model: str = "edge-hci"
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
+            raise ValueError("site name must be 1-64 characters and contain only letters, numbers, dot, underscore, or dash")
+        if value in {".", ".."} or value.startswith("."):
+            raise ValueError("site name cannot be a relative path segment")
+        return value
+
 
 class HardwareSpec(BaseModel):
     vendor: str = Field(examples=["generic-redfish", "dell-idrac", "hpe-ilo"])

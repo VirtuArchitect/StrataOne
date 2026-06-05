@@ -3,11 +3,13 @@ import time
 import io
 import json
 import zipfile
-from ipaddress import ip_network
+import socket
+from ipaddress import ip_address, ip_network
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,6 +182,7 @@ jobs = JobRunner(store)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_secure_runtime_defaults()
     ensure_admin_password()
     if os.getenv("STRATAONE_SEED_EXAMPLE", "true").lower() in {"1", "true", "yes"}:
         seed_example_site()
@@ -320,6 +323,24 @@ def ensure_admin_password() -> None:
     store.upsert_user(admin, password_hash=create_password_hash(password))
 
 
+def validate_secure_runtime_defaults() -> None:
+    environment = os.getenv("STRATAONE_ENVIRONMENT", "development").lower()
+    if environment not in {"prod", "production"}:
+        return
+    insecure_values = {
+        "STRATAONE_BOOTSTRAP_TOKEN": {"", "change-this-token"},
+        "STRATAONE_ADMIN_PASSWORD": {"", "change-this-password"},
+        "POSTGRES_PASSWORD": {"", "strataone"},
+    }
+    failures = [
+        name
+        for name, blocked in insecure_values.items()
+        if os.getenv(name, "") in blocked
+    ]
+    if failures:
+        raise RuntimeError(f"production startup blocked by insecure default setting(s): {', '.join(failures)}")
+
+
 @app.get("/providers")
 def providers(_: Any = read_providers) -> dict[str, Any]:
     return {"providers": [provider.model_dump(mode="json") for provider in list_providers()]}
@@ -378,7 +399,7 @@ def save_provider_config(provider_name: str, payload: ProviderConfigPayload, _: 
     if not any(item.name == provider_name for item in list_providers()):
         raise HTTPException(status_code=404, detail="provider not found")
     config = store.upsert_provider_config(provider_name, payload.config)
-    store.add_audit("api", "provider.config.upsert", f"provider:{provider_name}", payload.config)
+    store.add_audit("api", "provider.config.upsert", f"provider:{provider_name}", _redact_sensitive(payload.config))
     return config.model_dump(mode="json")
 
 
@@ -688,6 +709,7 @@ def validate_iso(iso_name: str, context: AuthContext = Depends(require_permissio
     iso = store.get_iso(iso_name)
     if iso is None:
         raise HTTPException(status_code=404, detail="iso not found")
+    _assert_safe_outbound_url(iso.uri)
     try:
         response = requests.head(iso.uri, timeout=float(os.getenv("STRATAONE_ISO_VALIDATE_TIMEOUT", "5")), allow_redirects=True)
         reachable = response.status_code < 400
@@ -813,6 +835,8 @@ def releases(_: Any = read_sites) -> dict[str, Any]:
 def test_notification(payload: NotificationTestPayload, context: AuthContext = manage_settings) -> dict[str, Any]:
     if payload.type not in {"teams", "slack", "email", "webhook"}:
         raise HTTPException(status_code=422, detail="notification type must be teams, slack, email, or webhook")
+    if payload.type in {"teams", "slack", "webhook"}:
+        _assert_safe_outbound_url(payload.target)
     result = {
         "name": payload.name.strip() or payload.type,
         "type": payload.type,
@@ -1010,24 +1034,21 @@ def list_job_records(site_name: str | None = None, context: AuthContext = read_j
 
 
 @app.get("/jobs/{job_id}")
-def get_job_record(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
-    job = store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+def get_job_record(job_id: str, context: AuthContext = read_jobs) -> dict[str, Any]:
+    job = _job_for_context(job_id, context)
     return job.model_dump(mode="json")
 
 
 @app.get("/jobs/{job_id}/events")
-def get_job_events(job_id: str, _: Any = read_jobs) -> dict[str, Any]:
+def get_job_events(job_id: str, context: AuthContext = read_jobs) -> dict[str, Any]:
+    _job_for_context(job_id, context)
     return {"events": [event.model_dump(mode="json") for event in store.list_job_events(job_id)]}
 
 
 @app.get("/jobs/{job_id}/report")
-def get_job_report(job_id: str, _: Any = Depends(require_permission("export-reports", store))) -> dict[str, Any]:
-    job = store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    site = store.get_site(job.site_name)
+def get_job_report(job_id: str, context: AuthContext = Depends(require_permission("export-reports", store))) -> dict[str, Any]:
+    job = _job_for_context(job_id, context)
+    site = store.get_site(job.site_name, _tenant_scope(context))
     events = store.list_job_events(job_id)
     return {
         "report_type": "strataone-job-execution",
@@ -1046,6 +1067,7 @@ def get_job_report(job_id: str, _: Any = Depends(require_permission("export-repo
 
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
+    _job_for_context(job_id, context)
     job = store.cancel_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -1055,9 +1077,7 @@ def cancel_job(job_id: str, context: AuthContext = Depends(require_permission("r
 
 @app.post("/jobs/{job_id}/retry")
 def retry_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
-    job = store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_for_context(job_id, context)
     new_job_id = jobs.submit(job.site_name, job.action, job.params)
     store.add_audit(context.username, "job.retry", f"job:{job_id}", {"new_job_id": new_job_id})
     return {"job_id": new_job_id, "status": "queued"}
@@ -1065,9 +1085,7 @@ def retry_job(job_id: str, context: AuthContext = Depends(require_permission("ru
 
 @app.post("/jobs/{job_id}/resume")
 def resume_job(job_id: str, context: AuthContext = Depends(require_permission("run-plan", store))) -> dict[str, Any]:
-    job = store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_for_context(job_id, context)
     if job.status not in {"failed", "canceled"}:
         raise HTTPException(status_code=409, detail="only failed or canceled jobs can be resumed")
     params = {**job.params, "resume_from_job_id": job_id}
@@ -1077,7 +1095,8 @@ def resume_job(job_id: str, context: AuthContext = Depends(require_permission("r
 
 
 @app.get("/jobs/{job_id}/events/stream")
-def stream_job_events(job_id: str, _: Any = read_jobs) -> StreamingResponse:
+def stream_job_events(job_id: str, context: AuthContext = read_jobs) -> StreamingResponse:
+    _job_for_context(job_id, context)
     def event_stream():
         seen: set[str] = set()
         for _ in range(120):
@@ -1110,6 +1129,11 @@ async def websocket_job_events(websocket: WebSocket, job_id: str, token: str | N
                 await websocket.send_json({"type": "error", "status": 403, "detail": "permission required: read-jobs"})
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
+            job = store.get_job(job_id)
+            if job is None or not _tenant_matches(job.tenant_id, context):
+                await websocket.send_json({"type": "error", "status": 404, "detail": "job not found"})
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
         seen: set[str] = set()
         for _ in range(120):
             events = store.list_job_events(job_id)
@@ -1138,9 +1162,10 @@ def list_audit_log(limit: int = 100, _: Any = read_audit) -> dict[str, Any]:
 
 
 @app.get("/approvals")
-def list_approval_records(_: Any = read_jobs) -> dict[str, Any]:
+def list_approval_records(context: AuthContext = read_jobs) -> dict[str, Any]:
     store.expire_pending_approvals()
-    return {"approvals": [item.model_dump(mode="json") for item in store.list_approvals()]}
+    approvals = [item for item in store.list_approvals() if _approval_visible(item, context)]
+    return {"approvals": [item.model_dump(mode="json") for item in approvals]}
 
 
 @app.post("/approvals/{approval_id}/approve")
@@ -1171,6 +1196,7 @@ def approve_and_run(approval_id: str, context: AuthContext = Depends(require_per
 
 @app.post("/approvals/{approval_id}/reject")
 def reject_request(approval_id: str, payload: ApprovalDecisionPayload | None = None, context: AuthContext = Depends(require_permission("manage-settings", store))) -> dict[str, Any]:
+    _assert_can_approve(approval_id, context)
     approval = store.reject(approval_id, context.username, payload.reason if payload else "")
     if approval is None:
         raise HTTPException(status_code=404, detail="approval not found")
@@ -1179,18 +1205,14 @@ def reject_request(approval_id: str, payload: ApprovalDecisionPayload | None = N
 
 
 @app.post("/sites/{site_name}/artifacts")
-def generate_artifacts(site_name: str, _: Any = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
-    site = store.get_site(site_name)
-    if site is None:
-        raise HTTPException(status_code=404, detail="site not found")
+def generate_artifacts(site_name: str, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
+    site = _site_for_context(site_name, context)
     return ArtifactGenerator().generate(spec_from_record(site)).model_dump(mode="json")
 
 
 @app.get("/sites/{site_name}/artifacts/files")
-def list_artifact_files(site_name: str, _: Any = read_sites) -> dict[str, Any]:
-    site = store.get_site(site_name)
-    if site is None:
-        raise HTTPException(status_code=404, detail="site not found")
+def list_artifact_files(site_name: str, context: AuthContext = read_sites) -> dict[str, Any]:
+    _site_for_context(site_name, context)
     site_dir = _artifact_site_dir(site_name)
     files = []
     if site_dir.exists():
@@ -1202,9 +1224,8 @@ def list_artifact_files(site_name: str, _: Any = read_sites) -> dict[str, Any]:
 
 
 @app.get("/sites/{site_name}/artifacts/files/{file_name}")
-def get_artifact_file(site_name: str, file_name: str, _: Any = read_sites) -> dict[str, Any]:
-    if store.get_site(site_name) is None:
-        raise HTTPException(status_code=404, detail="site not found")
+def get_artifact_file(site_name: str, file_name: str, context: AuthContext = read_sites) -> dict[str, Any]:
+    _site_for_context(site_name, context)
     if "/" in file_name or "\\" in file_name or file_name in {"", ".", ".."}:
         raise HTTPException(status_code=400, detail="invalid file name")
     path = _artifact_site_dir(site_name) / file_name
@@ -1214,9 +1235,8 @@ def get_artifact_file(site_name: str, file_name: str, _: Any = read_sites) -> di
 
 
 @app.get("/sites/{site_name}/artifacts/bundle.zip")
-def download_artifact_bundle(site_name: str, _: Any = read_sites) -> StreamingResponse:
-    if store.get_site(site_name) is None:
-        raise HTTPException(status_code=404, detail="site not found")
+def download_artifact_bundle(site_name: str, context: AuthContext = read_sites) -> StreamingResponse:
+    _site_for_context(site_name, context)
     site_dir = _artifact_site_dir(site_name)
     if not site_dir.exists():
         raise HTTPException(status_code=404, detail="artifact bundle not generated")
@@ -1278,6 +1298,30 @@ def preflight_site(payload: SitePayload, _: Any = Depends(require_permission("ru
 def run_queued_job_once(_: Any = worker_execute) -> dict[str, Any]:
     job_id = jobs.run_queued_once()
     return {"job_id": job_id, "ran": job_id is not None}
+
+
+def _site_for_context(site_name: str, context: AuthContext):
+    site = store.get_site(site_name, _tenant_scope(context))
+    if site is None:
+        raise HTTPException(status_code=404, detail="site not found")
+    return site
+
+
+def _job_for_context(job_id: str, context: AuthContext):
+    job = store.get_job(job_id)
+    if job is None or not _tenant_matches(job.tenant_id, context):
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
+def _tenant_matches(tenant_id: str, context: AuthContext) -> bool:
+    scope = _tenant_scope(context)
+    return scope == "*" or tenant_id == scope
+
+
+def _approval_visible(approval, context: AuthContext) -> bool:
+    site = store.get_site(approval.site_name, _tenant_scope(context))
+    return site is not None
 
 
 def _permission_for_action(action: str) -> str:
@@ -1360,6 +1404,8 @@ def _assert_can_approve(approval_id: str, context: AuthContext) -> None:
     approval = store.get_approval(approval_id)
     if approval is None:
         raise HTTPException(status_code=404, detail="approval not found")
+    if not _approval_visible(approval, context):
+        raise HTTPException(status_code=404, detail="approval not found")
     if approval.status != "pending":
         if approval.status == "expired":
             raise HTTPException(status_code=409, detail="approval request has expired")
@@ -1406,6 +1452,51 @@ def _redact_secret(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(safe.get("metadata"), dict):
         safe["metadata"] = {key: ("***" if "password" in key.lower() or "token" in key.lower() else value) for key, value in safe["metadata"].items()}
     return safe
+
+
+def _redact_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in ("password", "secret", "token", "key", "credential")):
+                redacted[key] = "***"
+            else:
+                redacted[key] = _redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive(item) for item in value]
+    return value
+
+
+def _assert_safe_outbound_url(url: str) -> None:
+    parsed = urlparse(str(url))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="outbound URL must be http or https with a hostname")
+    host = parsed.hostname.strip().lower()
+    blocked_hosts = {"localhost", "localhost.localdomain"}
+    if host in blocked_hosts or host.endswith(".localhost"):
+        raise HTTPException(status_code=422, detail="outbound URL host is not allowed")
+    try:
+        addresses = [ip_address(host)]
+    except ValueError:
+        try:
+            addresses = [ip_address(result[4][0]) for result in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)]
+        except socket.gaierror as exc:
+            raise HTTPException(status_code=422, detail="outbound URL host could not be resolved") from exc
+    if any(_is_blocked_outbound_ip(address) for address in addresses):
+        raise HTTPException(status_code=422, detail="outbound URL resolves to a private or reserved address")
+
+
+def _is_blocked_outbound_ip(address) -> bool:
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
 
 
 def _provider_config_template(provider_name: str, provider_type: str) -> dict[str, Any]:
@@ -1591,4 +1682,8 @@ def _redact_notification_target(target: str) -> str:
 
 
 def _artifact_site_dir(site_name: str) -> Path:
-    return Path(os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts")) / site_name
+    root = Path(os.getenv("STRATAONE_ARTIFACT_DIR", ".strataone/artifacts")).resolve()
+    site_dir = (root / site_name).resolve()
+    if root != site_dir and root not in site_dir.parents:
+        raise HTTPException(status_code=400, detail="artifact path escapes artifact root")
+    return site_dir

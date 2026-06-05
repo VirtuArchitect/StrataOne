@@ -171,7 +171,7 @@ STRATAONE_RATE_LIMIT_WINDOW_SECONDS=60
 STRATAONE_HSTS_ENABLED=true
 ```
 
-Protected API routes enforce bearer-token authentication when `STRATAONE_AUTH_ENABLED=true`. Use a bootstrap token for initial administration, or provide named API tokens mapped to RBAC roles:
+Protected API routes enforce bearer-token authentication by default. Set `STRATAONE_AUTH_ENABLED=false` only for isolated local development. Use a bootstrap token for initial administration, or provide named API tokens mapped to RBAC roles:
 
 ```env
 STRATAONE_AUTH_ENABLED=true
@@ -187,7 +187,7 @@ STRATAONE_TENANT_ENFORCEMENT=true
 STRATAONE_API_TOKENS=tenant-a-token=edge.operator:Viewer,Operator@tenant-a
 ```
 
-The dashboard signs in with local username/password sessions. The default Compose account is `admin` with `change-this-password`; override `STRATAONE_ADMIN_PASSWORD` before production use. Bootstrap/API tokens are still available for automation and emergency administration.
+The dashboard signs in with local username/password sessions. Session tokens are kept in browser session storage rather than persistent local storage. The default Compose account is `admin` with `change-this-password`; override `STRATAONE_ADMIN_PASSWORD` before production use. Bootstrap/API tokens are still available for automation and emergency administration. When `STRATAONE_ENVIRONMENT=production`, startup is blocked if placeholder bootstrap, admin, or PostgreSQL passwords are still configured.
 
 Dashboard inventory jobs can use transient BMC credentials entered in the UI, but production deployments should resolve credentials through a secret provider. Supported providers are environment variables, a local JSON secret file, or a HashiCorp Vault-compatible endpoint:
 

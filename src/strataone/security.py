@@ -48,7 +48,7 @@ class AuthContext:
 
 
 def auth_enabled() -> bool:
-    return os.getenv("STRATAONE_AUTH_ENABLED", os.getenv("STRATAONE_AUTH_REQUIRED", "false")).lower() in {"1", "true", "yes", "on"}
+    return os.getenv("STRATAONE_AUTH_ENABLED", os.getenv("STRATAONE_AUTH_REQUIRED", "true")).lower() in {"1", "true", "yes", "on"}
 
 
 def cors_origins() -> list[str]:
