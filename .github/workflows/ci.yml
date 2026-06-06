@@ -32,7 +32,7 @@ jobs:
         run: python -m pip_audit --skip-editable
 
       - name: Static security scan
-        run: python -m bandit -r src --severity-level high
+        run: python -m bandit -r src --severity-level medium
 
   docker:
     runs-on: ubuntu-latest

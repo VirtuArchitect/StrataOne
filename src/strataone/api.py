@@ -9,9 +9,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
@@ -711,10 +711,12 @@ def validate_iso(iso_name: str, context: AuthContext = Depends(require_permissio
         raise HTTPException(status_code=404, detail="iso not found")
     _assert_safe_outbound_url(iso.uri)
     try:
-        response = requests.head(iso.uri, timeout=float(os.getenv("STRATAONE_ISO_VALIDATE_TIMEOUT", "5")), allow_redirects=True)
+        response = _safe_outbound_request("head", iso.uri, timeout=float(os.getenv("STRATAONE_ISO_VALIDATE_TIMEOUT", "5")))
         reachable = response.status_code < 400
         content_length = response.headers.get("Content-Length")
         status = "validated" if reachable else "unreachable"
+    except HTTPException:
+        raise
     except Exception as exc:
         reachable = False
         content_length = None
@@ -849,9 +851,11 @@ def test_notification(payload: NotificationTestPayload, context: AuthContext = m
     if payload.send:
         if payload.type in {"teams", "slack", "webhook"}:
             try:
-                response = requests.post(payload.target, json={"text": payload.message, "source": "StrataOne"}, timeout=5)
+                response = _safe_outbound_request("post", payload.target, json={"text": payload.message, "source": "StrataOne"}, timeout=5)
                 result["http_status"] = response.status_code
                 result["status"] = "sent" if response.status_code < 400 else "failed"
+            except HTTPException:
+                raise
             except Exception as exc:
                 result["status"] = "failed"
                 result["error"] = str(exc)
@@ -1115,12 +1119,12 @@ def stream_job_events(job_id: str, context: AuthContext = read_jobs) -> Streamin
 
 
 @app.websocket("/jobs/{job_id}/events/ws")
-async def websocket_job_events(websocket: WebSocket, job_id: str, token: str | None = Query(default=None)) -> None:
+async def websocket_job_events(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
     try:
         if auth_enabled():
             try:
-                context = authenticate(f"Bearer {token}" if token else None, store)
+                context = authenticate(websocket.headers.get("Authorization"), store)
             except HTTPException as exc:
                 await websocket.send_json({"type": "error", "status": exc.status_code, "detail": exc.detail})
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -1467,6 +1471,22 @@ def _redact_sensitive(value: Any) -> Any:
     if isinstance(value, list):
         return [_redact_sensitive(item) for item in value]
     return value
+
+
+def _safe_outbound_request(method: str, url: str, *, timeout: float, max_redirects: int = 3, **kwargs: Any) -> requests.Response:
+    current_url = str(url)
+    for _ in range(max_redirects + 1):
+        _assert_safe_outbound_url(current_url)
+        response = requests.request(method, current_url, timeout=timeout, allow_redirects=False, **kwargs)
+        if response.is_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise HTTPException(status_code=422, detail="outbound redirect did not include a location")
+            current_url = urljoin(current_url, location)
+            continue
+        return response
+    raise HTTPException(status_code=422, detail="outbound URL exceeded redirect limit")
 
 
 def _assert_safe_outbound_url(url: str) -> None:

@@ -53,7 +53,7 @@ class HashicorpVaultSecretProvider:
     def bmc_credentials(self, site_name: str) -> BmcSecret | None:
         if not self.addr or not self.token:
             return None
-        response = requests.get(
+        response = requests.get(  # nosec B113
             f"{self.addr}/v1/{self.path}",
             headers={"X-Vault-Token": self.token},
             timeout=float(os.getenv("STRATAONE_VAULT_TIMEOUT", "5")),

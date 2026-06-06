@@ -339,8 +339,9 @@ def test_iso_validation_updates_status(monkeypatch) -> None:
     class Response:
         status_code = 200
         headers = {"Content-Length": "1024"}
+        is_redirect = False
 
-    monkeypatch.setattr("strataone.api.requests.head", lambda *args, **kwargs: Response())
+    monkeypatch.setattr("strataone.api.requests.request", lambda *args, **kwargs: Response())
     validated = client.post("/isos/validate-iso/validate")
 
     assert validated.status_code == 200
@@ -562,6 +563,7 @@ def test_inventory_can_be_saved_and_returned() -> None:
 def test_auth_enforcement_rejects_missing_token(monkeypatch) -> None:
     monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
     monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "test-bootstrap")
+    monkeypatch.setenv("STRATAONE_TEST_DEFAULT_AUTH", "false")
     client = TestClient(app)
 
     response = client.get("/sites")
@@ -572,6 +574,7 @@ def test_auth_enforcement_rejects_missing_token(monkeypatch) -> None:
 def test_auth_enforcement_defaults_to_enabled(monkeypatch) -> None:
     monkeypatch.delenv("STRATAONE_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("STRATAONE_AUTH_REQUIRED", raising=False)
+    monkeypatch.setenv("STRATAONE_TEST_DEFAULT_AUTH", "false")
     client = TestClient(app)
 
     response = client.get("/sites")

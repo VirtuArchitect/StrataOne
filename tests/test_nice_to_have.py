@@ -72,7 +72,7 @@ def test_job_websocket_stream_returns_events() -> None:
             break
         time.sleep(0.05)
 
-    with client.websocket_connect(f"/jobs/{job_id}/events/ws") as websocket:
+    with client.websocket_connect(f"/jobs/{job_id}/events/ws", headers={"Authorization": "Bearer test-bootstrap"}) as websocket:
         message = websocket.receive_json()
 
     assert message["type"] in {"job-event", "job-complete"}

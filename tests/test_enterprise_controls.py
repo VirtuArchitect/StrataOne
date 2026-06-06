@@ -103,6 +103,26 @@ def test_outbound_url_actions_block_localhost_targets() -> None:
     assert webhook.status_code == 422
 
 
+def test_outbound_url_actions_block_redirects_to_private_targets(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post("/isos", json={"name": "redirect-iso", "uri": "https://example.com/redirect.iso"})
+
+    class RedirectResponse:
+        status_code = 302
+        headers = {"Location": "http://127.0.0.1/private.iso"}
+        is_redirect = True
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("strataone.api.requests.request", lambda *args, **kwargs: RedirectResponse())
+
+    response = client.post("/isos/redirect-iso/validate")
+
+    assert response.status_code == 422
+    assert "private or reserved" in response.json()["detail"]
+
+
 def test_production_startup_rejects_placeholder_secrets(monkeypatch) -> None:
     monkeypatch.setenv("STRATAONE_ENVIRONMENT", "production")
     monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "change-this-token")
