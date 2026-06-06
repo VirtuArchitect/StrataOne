@@ -31,6 +31,11 @@ The first-class target is Azure Local, but the provider model is intentionally b
 
 Hardware support starts with generic Redfish and can be extended with OEM adapters such as Dell iDRAC, HPE iLO, Lenovo XClarity, Supermicro Redfish, or Cisco Intersight.
 
+<img width="1703" height="1209" alt="image" src="https://github.com/user-attachments/assets/23268ace-d1fd-4a90-8d5c-9bd4d072e184" />
+
+<img width="1705" height="1216" alt="image" src="https://github.com/user-attachments/assets/62141ced-dbe2-4fad-9fce-d5508f345353" />
+
+
 ## Architecture
 
 ```text
