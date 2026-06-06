@@ -11,6 +11,21 @@ Field and operator documentation:
 - [Field Installation Guide](docs/FIELD_INSTALLATION_GUIDE.md)
 - [User Guide](docs/USER_GUIDE.md)
 
+## Engineering Quality
+
+This project follows a production-grade quality bar. Changes are expected to
+include relevant tests, smoke-test evidence, and security review when sensitive
+code is touched. CI checks should pass before merge.
+
+Quality gates include:
+
+- Unit, integration, or end-to-end tests as appropriate.
+- Linting and type checks where supported.
+- Build verification.
+- Manual or automated smoke testing for changed workflows.
+- Security review for auth, user data, permissions, file handling,
+  dependencies, and external input.
+
 ## Vision
 
 StrataOne turns a desired-state site definition into a repeatable deployment and lifecycle workflow:
