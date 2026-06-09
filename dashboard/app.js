@@ -177,6 +177,7 @@ const lifecycleItems = [
 const exampleYaml = toYaml(exampleSpec());
 document.documentElement.dataset.theme = state.theme;
 els.siteYaml.value = exampleYaml;
+hideAuthModal();
 
 wireEvents();
 renderAuthState();
@@ -2762,6 +2763,7 @@ function toggleTheme() {
 }
 
 function requestAuthToken() {
+  writeResult("sign in required", { status: "Sign in before running protected actions.", default_user: "admin" });
   showAuthModal();
   return false;
 }
@@ -2814,7 +2816,7 @@ function renderAuthRequired() {
     status: "Sign in with a StrataOne local user account to load protected operational data.",
     default_user: "admin",
   });
-  showAuthModal();
+  hideAuthModal();
 }
 
 function handleAuthRequired(message = "Sign in required.") {
@@ -2824,7 +2826,7 @@ function handleAuthRequired(message = "Sign in required.") {
     els.settingsContent.innerHTML = `<div class="settings-empty">Sign in to view and manage settings.</div>`;
   }
   writeResult("authentication required", { status: message, default_user: "admin" });
-  showAuthModal();
+  hideAuthModal();
 }
 
 function isAuthError(error) {
