@@ -332,6 +332,25 @@ def test_iso_registry_round_trips() -> None:
     assert any(iso["name"] == "azure-local-test" for iso in listed.json()["isos"])
 
 
+def test_iso_browse_lists_server_library(monkeypatch, tmp_path) -> None:
+    library = tmp_path / "iso-library"
+    library.mkdir()
+    iso_file = library / "azure-local-23h2.iso"
+    iso_file.write_bytes(b"iso")
+    monkeypatch.setenv("STRATAONE_ISO_LIBRARY_DIR", str(library))
+    monkeypatch.setenv("STRATAONE_ISO_LIBRARY_URL_PREFIX", "https://repo.example.com/isos")
+    client = TestClient(app)
+
+    response = client.get("/isos/browse")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["directory"] == str(library.resolve())
+    assert payload["isos"][0]["name"] == "azure-local-23h2"
+    assert payload["isos"][0]["uri"] == "https://repo.example.com/isos/azure-local-23h2.iso"
+    assert payload["isos"][0]["registerable"] is True
+
+
 def test_iso_validation_updates_status(monkeypatch) -> None:
     client = TestClient(app)
     client.post("/isos", json={"name": "validate-iso", "uri": "https://example.com/validate.iso"})

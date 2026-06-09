@@ -9,6 +9,10 @@ const state = {
   approvals: [],
   artifacts: [],
   isos: [],
+  isoLibrary: [],
+  isoLibraryDirectory: "",
+  isoLibraryUrlPrefix: "",
+  isoBrowserTarget: "registry",
   audit: [],
   sessions: [],
   discovery: [],
@@ -77,6 +81,7 @@ const els = {
   artifactDetails: document.querySelector("#artifactDetails"),
   artifactList: document.querySelector("#artifactList"),
   isoList: document.querySelector("#isoList"),
+  isoBrowser: document.querySelector("#isoBrowser"),
   deploymentDetailTitle: document.querySelector("#deploymentDetailTitle"),
   deploymentDetailSubtitle: document.querySelector("#deploymentDetailSubtitle"),
   deploymentDetailContent: document.querySelector("#deploymentDetailContent"),
@@ -427,10 +432,25 @@ async function loadIsos() {
   try {
     const data = await apiGet("/isos");
     state.isos = data.isos || [];
+    await loadIsoLibrary();
     renderIsos();
   } catch {
     state.isos = [];
+    state.isoLibrary = [];
     renderIsos();
+  }
+}
+
+async function loadIsoLibrary() {
+  try {
+    const data = await apiGet("/isos/browse");
+    state.isoLibrary = data.isos || [];
+    state.isoLibraryDirectory = data.directory || "";
+    state.isoLibraryUrlPrefix = data.url_prefix || "";
+  } catch {
+    state.isoLibrary = [];
+    state.isoLibraryDirectory = "";
+    state.isoLibraryUrlPrefix = "";
   }
 }
 
@@ -1105,11 +1125,74 @@ function renderIsos() {
         <span>${iso.checksum ? `${escapeHtml(iso.checksum_algorithm)} ${escapeHtml(iso.checksum)}` : "No checksum registered"}</span>
       </div>
       <div class="row-actions">
+        <button class="mini secondary" data-select-iso="${escapeHtml(iso.name)}">Select</button>
         <button class="mini secondary" data-validate-iso="${escapeHtml(iso.name)}">Validate</button>
         <button class="mini danger" data-delete-iso="${escapeHtml(iso.name)}">Delete</button>
       </div>
     </div>
   `).join("") || `<div class="settings-empty">No ISOs registered.</div>`;
+  renderIsoBrowser();
+}
+
+function renderIsoBrowser() {
+  if (!els.isoBrowser || els.isoBrowser.hidden) return;
+  const registeredRows = state.isos.map((iso) => `
+    <div class="settings-row">
+      <div>
+        <strong>${escapeHtml(iso.name)} <span class="badge">registered</span></strong>
+        <span>${escapeHtml(iso.uri)}</span>
+      </div>
+      <div class="row-actions">
+        <button class="mini" data-browser-select-iso="${escapeHtml(iso.name)}" data-browser-source="registered">Use</button>
+      </div>
+    </div>
+  `).join("");
+  const libraryRows = state.isoLibrary.map((iso) => `
+    <div class="settings-row">
+      <div>
+        <strong>${escapeHtml(iso.name)} <span class="badge">library</span></strong>
+        <span>${escapeHtml(iso.uri || iso.filename)}</span>
+        <span>${formatBytes(iso.size_bytes)} - ${formatDate(iso.updated_at)}</span>
+      </div>
+      <div class="row-actions">
+        <button class="mini" ${iso.registerable ? "" : "disabled"} data-browser-select-iso="${escapeHtml(iso.name)}" data-browser-source="library">Use</button>
+        <button class="mini secondary" ${iso.registerable ? "" : "disabled"} data-register-library-iso="${escapeHtml(iso.name)}">Register</button>
+      </div>
+    </div>
+  `).join("");
+  els.isoBrowser.innerHTML = `
+    <div class="iso-browser-header">
+      <div>
+        <strong>Browse ISO Media</strong>
+        <span>${escapeHtml(state.isoLibraryDirectory || "Server library not configured")}</span>
+      </div>
+      <button type="button" class="mini secondary" data-close-iso-browser>Close</button>
+    </div>
+    <div class="iso-browser-grid">
+      <div>
+        <h3>Registered</h3>
+        ${registeredRows || `<div class="settings-empty">No registered ISOs.</div>`}
+      </div>
+      <div>
+        <h3>Server Library</h3>
+        ${libraryRows || `<div class="settings-empty">No ISO files discovered.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function applyIsoSelection(name, source = "registered", target = "registry") {
+  const iso = source === "library"
+    ? state.isoLibrary.find((item) => item.name === name)
+    : state.isos.find((item) => item.name === name);
+  if (!iso) return;
+  if (target === "mount") {
+    if (source === "registered" && els.isoRef) els.isoRef.value = iso.name;
+    if (els.isoUrl) els.isoUrl.value = iso.uri || "";
+    return;
+  }
+  setValue("#isoName", iso.name || "");
+  setValue("#isoUri", iso.uri || "");
 }
 
 function renderTemplates() {
@@ -1763,6 +1846,48 @@ async function handleDocumentActions(event) {
     const result = await apiDelete(`/discovery/${encodeURIComponent(deleteDiscovery.dataset.deleteDiscovery)}`);
     writeResult("discovery deleted", result);
     await loadDiscovery();
+    return;
+  }
+  const openIsoBrowser = event.target.closest("[data-open-iso-browser]");
+  if (openIsoBrowser) {
+    state.isoBrowserTarget = openIsoBrowser.dataset.openIsoBrowser || "registry";
+    await loadIsoLibrary();
+    if (els.isoBrowser) {
+      els.isoBrowser.hidden = false;
+      renderIsoBrowser();
+    }
+    return;
+  }
+  const closeIsoBrowser = event.target.closest("[data-close-iso-browser]");
+  if (closeIsoBrowser) {
+    if (els.isoBrowser) els.isoBrowser.hidden = true;
+    return;
+  }
+  const selectIso = event.target.closest("[data-select-iso]");
+  if (selectIso) {
+    applyIsoSelection(selectIso.dataset.selectIso, "registered", "mount");
+    showView("sites");
+    return;
+  }
+  const browserSelectIso = event.target.closest("[data-browser-select-iso]");
+  if (browserSelectIso) {
+    applyIsoSelection(browserSelectIso.dataset.browserSelectIso, browserSelectIso.dataset.browserSource, state.isoBrowserTarget);
+    if (els.isoBrowser) els.isoBrowser.hidden = true;
+    return;
+  }
+  const registerLibraryIso = event.target.closest("[data-register-library-iso]");
+  if (registerLibraryIso) {
+    const iso = state.isoLibrary.find((item) => item.name === registerLibraryIso.dataset.registerLibraryIso);
+    if (iso?.uri) {
+      const saved = await apiPost("/isos", {
+        name: iso.name,
+        uri: iso.uri,
+        checksum: null,
+        checksum_algorithm: "sha256",
+      });
+      writeResult("iso registered", saved);
+      await loadIsos();
+    }
     return;
   }
   const deleteIso = event.target.closest("[data-delete-iso]");
@@ -2739,6 +2864,14 @@ function formatScalar(value) {
 function formatDate(value) {
   if (!value) return "-";
   return new Date(value).toLocaleString();
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
 function sleep(ms) {

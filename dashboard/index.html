@@ -324,7 +324,12 @@
               <div class="action-status" id="siteActionStatus">No site action running</div>
               <div class="iso-box">
                 <label>Registered ISO<select id="isoRef"></select></label>
-                <label>ISO URL<input id="isoUrl" placeholder="https://repo.example.com/azure-local.iso" /></label>
+                <label>ISO URL
+                  <span class="input-action">
+                    <input id="isoUrl" placeholder="https://repo.example.com/azure-local.iso" />
+                    <button type="button" class="secondary mini" data-open-iso-browser="mount">Browse</button>
+                  </span>
+                </label>
                 <label><input id="isoBootOnce" type="checkbox" checked /> Boot once from virtual media</label>
                 <div class="button-row">
                   <button data-job="mount-iso">Mount ISO</button>
@@ -599,10 +604,16 @@
               <form class="settings-form iso-form" id="isoForm">
                 <div class="form-grid">
                   <label>Name<input id="isoName" placeholder="azure-local-23h2" /></label>
-                  <label>URI<input id="isoUri" placeholder="https://repo.example.com/azure-local.iso" /></label>
+                  <label>URI
+                    <span class="input-action">
+                      <input id="isoUri" placeholder="https://repo.example.com/azure-local.iso" />
+                      <button type="button" class="secondary mini" data-open-iso-browser="registry">Browse</button>
+                    </span>
+                  </label>
                   <label>Checksum<input id="isoChecksum" placeholder="optional sha256" /></label>
                   <label>Algorithm<input id="isoChecksumAlgorithm" value="sha256" /></label>
                 </div>
+                <div class="iso-browser" id="isoBrowser" hidden></div>
                 <button type="submit">Register ISO</button>
               </form>
               <div class="settings-list" id="isoList"></div>

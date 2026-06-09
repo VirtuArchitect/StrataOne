@@ -891,6 +891,13 @@ input[type="checkbox"]:focus {
 
 .inline-controls input[type="number"] { width: 78px; }
 
+.input-action {
+  align-items: stretch;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .detail-list {
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);
@@ -1309,6 +1316,51 @@ textarea {
   border-width: 0 0 1px;
 }
 
+.iso-browser {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.iso-browser[hidden] {
+  display: none;
+}
+
+.iso-browser-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iso-browser-header strong,
+.iso-browser-header span,
+.iso-browser-grid h3 {
+  display: block;
+}
+
+.iso-browser-header span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.iso-browser-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.iso-browser-grid h3 {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
 .provider-matrix {
   border-bottom: 1px solid var(--line);
   padding: 14px;
@@ -1489,6 +1541,7 @@ pre {
   .settings-layout { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
   .rbac-grid { grid-template-columns: 1fr; }
+  .iso-browser-grid { grid-template-columns: 1fr; }
   .node-row { grid-template-columns: 1fr; }
   .readiness-banner { align-items: flex-start; flex-direction: column; gap: 14px; }
   .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 { grid-column: 1 / -1; }

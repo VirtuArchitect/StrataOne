@@ -687,6 +687,32 @@ def list_isos(_: Any = read_sites) -> dict[str, Any]:
     return {"isos": [item.model_dump(mode="json") for item in store.list_isos()]}
 
 
+@app.get("/isos/browse")
+def browse_isos(_: Any = read_sites) -> dict[str, Any]:
+    library_dir = Path(os.getenv("STRATAONE_ISO_LIBRARY_DIR", ".strataone/iso-library")).resolve()
+    url_prefix = os.getenv("STRATAONE_ISO_LIBRARY_URL_PREFIX", "").rstrip("/")
+    entries: list[dict[str, Any]] = []
+    if library_dir.exists() and library_dir.is_dir():
+        for path in sorted(library_dir.glob("*.iso")):
+            stat = path.stat()
+            uri = f"{url_prefix}/{path.name}" if url_prefix else ""
+            entries.append(
+                {
+                    "name": path.stem,
+                    "filename": path.name,
+                    "uri": uri,
+                    "size_bytes": stat.st_size,
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
+                    "registerable": bool(uri),
+                }
+            )
+    return {
+        "directory": str(library_dir),
+        "url_prefix": url_prefix,
+        "isos": entries,
+    }
+
+
 @app.post("/isos")
 def save_iso(payload: IsoPayload, context: AuthContext = Depends(require_permission("generate-artifacts", store))) -> dict[str, Any]:
     name = payload.name.strip()
