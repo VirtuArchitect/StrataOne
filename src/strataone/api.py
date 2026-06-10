@@ -1580,37 +1580,354 @@ def _candidate_serial(candidate: dict[str, Any], index: int) -> str:
 def _deployment_templates() -> list[dict[str, Any]]:
     base = load_site_spec(Path("examples/azure-local-branch.yaml")).model_dump(mode="json")
     templates = [
-        ("azure-local-branch", "Azure Local Branch", "Two-node Azure Local branch or edge deployment.", base),
-        ("vsphere-cluster", "vSphere Cluster", "Two-host vSphere cluster with shared management/storage intent.", _template_variant(base, "vmware-vsphere", "vsphere-cluster", "vcenter-cluster", "private-cloud")),
-        ("proxmox-lab", "Proxmox Lab", "Compact Proxmox VE lab cluster using Redfish hardware discovery.", _template_variant(base, "proxmox", "proxmox-lab", "px-lab-001", "lab")),
-        ("ahv-edge", "AHV Edge", "Nutanix AHV edge cluster aligned to Prism-managed operations.", _template_variant(base, "nutanix-ahv", "ahv-edge", "ahv-edge-001", "edge-hci")),
-        ("hyper-v-cluster", "Hyper-V Cluster", "Windows virtualization cluster target for Hyper-V estates.", _template_variant(base, "hyper-v", "hyper-v-cluster", "hv-cluster-001", "private-cloud")),
-        ("openshift-virtualization", "OpenShift Virtualization", "Kubernetes-native virtualization target for OpenShift estates.", _template_variant(base, "openshift-virtualization", "ocp-virt", "ocp-virt-001", "private-cloud")),
+        (
+            "azure-local-branch",
+            "Azure Local Branch",
+            "Two-node Azure Local branch or edge deployment with Arc workloads.",
+            "branch",
+            ["Azure Local", "Arc", "two-node"],
+            base,
+        ),
+        (
+            "azure-local-edge-scale",
+            "Azure Local Edge Scale",
+            "Four-node Azure Local edge cluster for HA workloads and AKS hybrid.",
+            "edge",
+            ["Azure Local", "AKS", "four-node"],
+            _template_variant(
+                base,
+                "azure-local",
+                "al-edge-scale",
+                "al-edge-scale-001",
+                "edge-hci",
+                nodes=4,
+                topology="four-node-switched",
+                hardware_vendor="dell-idrac",
+                network={"management_vlan": 210, "storage_vlan": 220, "vm_vlan": 230},
+                azure={"resource_group": "rg-al-edge-scale", "region": "westeurope"},
+                workloads={"aks": True, "arc_vms": True, "avd": False, "kubernetes": False},
+                settings={"deployment_mode": "cloud-witness", "storage_spaces_direct": True},
+            ),
+        ),
+        (
+            "azure-local-stretched",
+            "Azure Local Stretched",
+            "Four-node stretched Azure Local design for two-room or metro resilient sites.",
+            "resilience",
+            ["Azure Local", "stretched", "witness"],
+            _template_variant(
+                base,
+                "azure-local",
+                "al-stretched-001",
+                "al-stretched-001",
+                "stretched-hci",
+                nodes=4,
+                topology="stretched-two-site",
+                hardware_vendor="hpe-ilo",
+                network={"management_vlan": 310, "storage_vlan": 320, "vm_vlan": 330},
+                azure={"resource_group": "rg-al-stretched", "region": "northeurope"},
+                workloads={"aks": False, "arc_vms": True, "avd": False, "kubernetes": False},
+                settings={"fault_domains": ["room-a", "room-b"], "witness": "cloud"},
+            ),
+        ),
+        (
+            "vsphere-management",
+            "vSphere Management Cluster",
+            "Three-host vSphere management cluster for vCenter, tooling, and core services.",
+            "management",
+            ["vSphere", "vCenter", "management"],
+            _template_variant(
+                base,
+                "vmware-vsphere",
+                "vsphere-mgmt-001",
+                "vcsa-mgmt-001",
+                "management-cluster",
+                nodes=3,
+                topology="three-node-vsan",
+                hardware_vendor="dell-idrac",
+                network={"management_vlan": 410, "storage_vlan": 420, "vm_vlan": 430},
+                workloads={"aks": False, "arc_vms": False, "avd": False, "kubernetes": False},
+                settings={"vcenter": "vcenter.example.com", "datacenter": "dc01", "vsan": True},
+            ),
+        ),
+        (
+            "vsphere-workload",
+            "vSphere Workload Cluster",
+            "Four-host vSphere workload cluster with shared management and VM networks.",
+            "private-cloud",
+            ["vSphere", "ESXi", "workload"],
+            _template_variant(
+                base,
+                "vmware-vsphere",
+                "vsphere-workload-001",
+                "compute-cluster-001",
+                "private-cloud",
+                nodes=4,
+                topology="four-node-vsan",
+                hardware_vendor="lenovo-xclarity",
+                network={"management_vlan": 440, "storage_vlan": 450, "vm_vlan": 460},
+                settings={"vcenter": "vcenter.example.com", "datacenter": "dc01", "drs": True, "ha": True},
+            ),
+        ),
+        (
+            "nutanix-ahv-edge",
+            "Nutanix AHV Edge",
+            "Three-node Nutanix AHV edge cluster aligned to Prism-managed operations.",
+            "edge-hci",
+            ["AHV", "Prism", "edge"],
+            _template_variant(
+                base,
+                "nutanix-ahv",
+                "ahv-edge-001",
+                "ahv-edge-001",
+                "edge-hci",
+                nodes=3,
+                topology="three-node-ahv",
+                hardware_vendor="generic-redfish",
+                network={"management_vlan": 510, "storage_vlan": 520, "vm_vlan": 530},
+                settings={"prism_element": "https://prism-element.example.com:9440", "replication": "async"},
+            ),
+        ),
+        (
+            "nutanix-ahv-robo",
+            "Nutanix AHV ROBO",
+            "Two-node AHV remote-office template with witness-assisted resilience.",
+            "branch",
+            ["AHV", "ROBO", "witness"],
+            _template_variant(
+                base,
+                "nutanix-ahv",
+                "ahv-robo-001",
+                "ahv-robo-001",
+                "branch-hci",
+                nodes=2,
+                topology="two-node-witness",
+                hardware_vendor="supermicro-redfish",
+                network={"management_vlan": 540, "storage_vlan": 550, "vm_vlan": 560},
+                settings={"witness": "prism-central", "replication": "none"},
+            ),
+        ),
+        (
+            "proxmox-lab",
+            "Proxmox Lab",
+            "Compact Proxmox VE lab cluster using Redfish hardware discovery.",
+            "lab",
+            ["Proxmox", "lab", "Ceph optional"],
+            _template_variant(
+                base,
+                "proxmox",
+                "proxmox-lab-001",
+                "px-lab-001",
+                "lab",
+                nodes=2,
+                topology="two-node-lab",
+                hardware_vendor="generic-redfish",
+                network={"management_vlan": 610, "storage_vlan": 620, "vm_vlan": 630},
+                settings={"ceph": False, "ha": False, "repository": "enterprise-disabled"},
+            ),
+        ),
+        (
+            "proxmox-edge",
+            "Proxmox Edge",
+            "Three-node Proxmox VE edge cluster with Ceph-backed workload storage.",
+            "edge",
+            ["Proxmox", "Ceph", "edge"],
+            _template_variant(
+                base,
+                "proxmox",
+                "proxmox-edge-001",
+                "px-edge-001",
+                "edge-cluster",
+                nodes=3,
+                topology="three-node-ceph",
+                hardware_vendor="supermicro-redfish",
+                network={"management_vlan": 640, "storage_vlan": 650, "vm_vlan": 660},
+                settings={"ceph": True, "ha": True, "repository": "enterprise"},
+            ),
+        ),
+        (
+            "hyper-v-cluster",
+            "Hyper-V Cluster",
+            "Two-node Windows Hyper-V failover cluster for private-cloud estates.",
+            "private-cloud",
+            ["Hyper-V", "Windows", "failover"],
+            _template_variant(
+                base,
+                "hyper-v",
+                "hyperv-cluster-001",
+                "hv-cluster-001",
+                "private-cloud",
+                nodes=2,
+                topology="two-node-failover",
+                hardware_vendor="dell-idrac",
+                network={"management_vlan": 710, "storage_vlan": 720, "vm_vlan": 730},
+                settings={"cluster_witness": "file-share", "s2d": True},
+            ),
+        ),
+        (
+            "hyper-v-workload",
+            "Hyper-V Workload Scale",
+            "Four-node Hyper-V cluster for larger Windows Server virtualization estates.",
+            "private-cloud",
+            ["Hyper-V", "S2D", "scale"],
+            _template_variant(
+                base,
+                "hyper-v",
+                "hyperv-workload-001",
+                "hv-workload-001",
+                "private-cloud",
+                nodes=4,
+                topology="four-node-s2d",
+                hardware_vendor="hpe-ilo",
+                network={"management_vlan": 740, "storage_vlan": 750, "vm_vlan": 760},
+                settings={"cluster_witness": "cloud", "s2d": True, "live_migration": True},
+            ),
+        ),
+        (
+            "kvm-libvirt",
+            "KVM Libvirt Cluster",
+            "Vendor-neutral KVM/libvirt template for Linux virtualization hosts.",
+            "private-cloud",
+            ["KVM", "libvirt", "Linux"],
+            _template_variant(
+                base,
+                "kvm",
+                "kvm-libvirt-001",
+                "kvm-cluster-001",
+                "private-cloud",
+                nodes=3,
+                topology="three-node-linux",
+                hardware_vendor="generic-redfish",
+                network={"management_vlan": 810, "storage_vlan": 820, "vm_vlan": 830},
+                settings={"libvirt": True, "storage_backend": "shared-nfs", "bridge": "br0"},
+            ),
+        ),
+        (
+            "kvm-openstack",
+            "KVM OpenStack Compute",
+            "KVM compute foundation for OpenStack or adjacent cloud stacks.",
+            "cloud-compute",
+            ["KVM", "OpenStack", "compute"],
+            _template_variant(
+                base,
+                "kvm",
+                "kvm-openstack-001",
+                "kvm-compute-001",
+                "cloud-compute",
+                nodes=4,
+                topology="four-node-compute",
+                hardware_vendor="cisco-intersight",
+                network={"management_vlan": 840, "storage_vlan": 850, "vm_vlan": 860},
+                settings={"cloud_stack": "openstack", "neutron_bridge": "br-provider", "storage_backend": "ceph"},
+            ),
+        ),
+        (
+            "openshift-virtualization",
+            "OpenShift Virtualization",
+            "Kubernetes-native virtualization target for OpenShift estates.",
+            "private-cloud",
+            ["OpenShift", "KubeVirt", "virtualization"],
+            _template_variant(
+                base,
+                "openshift-virtualization",
+                "ocp-virt-001",
+                "ocp-virt-001",
+                "private-cloud",
+                nodes=3,
+                topology="three-node-compact",
+                hardware_vendor="lenovo-xclarity",
+                network={"management_vlan": 910, "storage_vlan": 920, "vm_vlan": 930},
+                workloads={"aks": False, "arc_vms": False, "avd": False, "kubernetes": True},
+                settings={"operator": "cnv", "storage_class": "ocs-storagecluster-ceph-rbd"},
+            ),
+        ),
+        (
+            "openshift-virtualization-edge",
+            "OpenShift Virtualization Edge",
+            "Compact OpenShift Virtualization edge profile for remote application platforms.",
+            "edge",
+            ["OpenShift", "edge", "KubeVirt"],
+            _template_variant(
+                base,
+                "openshift-virtualization",
+                "ocp-edge-001",
+                "ocp-edge-001",
+                "edge-platform",
+                nodes=3,
+                topology="compact-edge",
+                hardware_vendor="dell-idrac",
+                network={"management_vlan": 940, "storage_vlan": 950, "vm_vlan": 960},
+                workloads={"aks": False, "arc_vms": False, "avd": False, "kubernetes": True},
+                settings={"operator": "cnv", "gitops": True, "disconnected": False},
+            ),
+        ),
     ]
     return [
         {
             "id": template_id,
             "name": name,
             "description": description,
+            "category": category,
+            "tags": tags,
             "use_case": spec["site"]["deployment_model"],
             "hardware_provider": spec["hardware"]["vendor"],
             "platform": spec["platform"]["type"],
             "nodes": len(spec["hardware"]["nodes"]),
             "spec": spec,
         }
-        for template_id, name, description, spec in templates
+        for template_id, name, description, category, tags, spec in templates
     ]
 
 
-def _template_variant(base: dict[str, Any], platform: str, site_name: str, cluster_name: str, deployment_model: str) -> dict[str, Any]:
+def _template_variant(
+    base: dict[str, Any],
+    platform: str,
+    site_name: str,
+    cluster_name: str,
+    deployment_model: str,
+    *,
+    nodes: int = 2,
+    topology: str | None = None,
+    hardware_vendor: str = "generic-redfish",
+    network: dict[str, Any] | None = None,
+    azure: dict[str, Any] | None = None,
+    workloads: dict[str, bool] | None = None,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     spec = json.loads(json.dumps(base))
     spec["site"]["name"] = site_name
+    spec["site"]["location"] = f"{site_name}-site"
     spec["site"]["deployment_model"] = deployment_model
+    spec["hardware"]["vendor"] = hardware_vendor
+    spec["hardware"]["nodes"] = [
+        {
+            "serial": f"{site_name.upper().replace('-', '')[:12]}{index:02d}",
+            "bmc_ip": f"10.{10 + index}.{nodes}.{10 + index}",
+            "role": "host",
+        }
+        for index in range(1, nodes + 1)
+    ]
+    if network:
+        spec["network"].update(network)
     spec["platform"]["type"] = platform
     spec["platform"]["cluster_name"] = cluster_name
-    spec["platform"]["topology"] = "two-node-cluster" if platform != "proxmox" else "two-node-lab"
-    spec["workloads"]["kubernetes"] = platform == "openshift-virtualization"
-    spec["workloads"]["aks"] = platform == "azure-local"
+    spec["platform"]["topology"] = topology or ("two-node-lab" if platform == "proxmox" else "two-node-cluster")
+    if platform == "azure-local":
+        spec["platform"].setdefault("azure", {})
+        spec["platform"]["azure"].update(azure or {})
+    else:
+        spec["platform"].pop("azure", None)
+    spec["platform"]["settings"] = settings or {}
+    spec["workloads"].update(
+        workloads
+        if workloads is not None
+        else {
+            "aks": platform == "azure-local",
+            "avd": False,
+            "arc_vms": platform == "azure-local",
+            "kubernetes": platform == "openshift-virtualization",
+        }
+    )
     return spec
 
 

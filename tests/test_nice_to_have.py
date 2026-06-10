@@ -41,6 +41,45 @@ def test_templates_are_available_without_auth(monkeypatch) -> None:
     assert any(item["id"] == "azure-local-branch" for item in response.json()["templates"])
 
 
+def test_deployment_templates_cover_all_platform_options() -> None:
+    client = TestClient(app)
+
+    response = client.get("/templates")
+
+    assert response.status_code == 200
+    templates = response.json()["templates"]
+    template_ids = {item["id"] for item in templates}
+    platforms = {item["platform"] for item in templates}
+    assert {
+        "azure-local-branch",
+        "azure-local-edge-scale",
+        "azure-local-stretched",
+        "vsphere-management",
+        "vsphere-workload",
+        "nutanix-ahv-edge",
+        "nutanix-ahv-robo",
+        "proxmox-lab",
+        "proxmox-edge",
+        "hyper-v-cluster",
+        "hyper-v-workload",
+        "kvm-libvirt",
+        "kvm-openstack",
+        "openshift-virtualization",
+        "openshift-virtualization-edge",
+    }.issubset(template_ids)
+    assert {
+        "azure-local",
+        "vmware-vsphere",
+        "nutanix-ahv",
+        "proxmox",
+        "hyper-v",
+        "kvm",
+        "openshift-virtualization",
+    } == platforms
+    assert all(item["nodes"] == len(item["spec"]["hardware"]["nodes"]) for item in templates)
+    assert all(item["category"] and item["tags"] for item in templates)
+
+
 def test_artifact_zip_and_iac_outputs() -> None:
     client = _client_with_site()
 
