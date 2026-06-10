@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>StrataOne</title>
     <link rel="icon" href="./assets/veridian-mark-teal.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260609-v037" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-v038" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -178,6 +178,27 @@
               </div>
 
               <div class="template-strip" id="templateStrip"></div>
+              <form class="settings-form template-import-form" id="templateImportForm">
+                <div class="section-toolbar">
+                  <div>
+                    <strong>Import Template</strong>
+                    <span>Paste or upload a deployment template in JSON or YAML.</span>
+                  </div>
+                  <label class="file-button">
+                    Upload
+                    <input id="templateFile" type="file" accept=".json,.yaml,.yml,application/json,text/yaml,text/plain" />
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label>Name<input id="templateName" placeholder="Azure Local branch - custom" /></label>
+                  <label>Description<input id="templateDescription" placeholder="Reusable deployment template" /></label>
+                </div>
+                <textarea id="templateContent" spellcheck="false" placeholder="Paste a SiteSpec JSON/YAML document, or a template object with name, description, and spec."></textarea>
+                <div class="button-row">
+                  <button type="submit">Import Template</button>
+                  <button class="secondary" type="button" id="clearImportedTemplates">Clear Imported</button>
+                </div>
+              </form>
 
               <div class="wizard-page active" data-page="intent">
                 <div class="form-grid">
@@ -742,6 +763,6 @@
       </form>
     </div>
 
-    <script src="./app.js?v=20260609-v037"></script>
+    <script src="./app.js?v=20260610-v038"></script>
   </body>
 </html>

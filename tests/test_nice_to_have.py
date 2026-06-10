@@ -30,6 +30,17 @@ def test_templates_topology_compatibility_and_releases() -> None:
     assert any(item["version"] == "0.3.0-preview" for item in releases.json()["releases"])
 
 
+def test_templates_are_available_without_auth(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRATAONE_TEST_DEFAULT_AUTH", "false")
+    client = TestClient(app)
+
+    response = client.get("/templates")
+
+    assert response.status_code == 200
+    assert any(item["id"] == "azure-local-branch" for item in response.json()["templates"])
+
+
 def test_artifact_zip_and_iac_outputs() -> None:
     client = _client_with_site()
 

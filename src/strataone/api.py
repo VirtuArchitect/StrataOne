@@ -834,7 +834,7 @@ def oem_validation(_: Any = read_settings) -> dict[str, Any]:
 
 
 @app.get("/templates")
-def deployment_templates(_: Any = read_sites) -> dict[str, Any]:
+def deployment_templates() -> dict[str, Any]:
     return {"templates": _deployment_templates()}
 
 

@@ -17,6 +17,7 @@ const state = {
   sessions: [],
   discovery: [],
   templates: [],
+  customTemplates: loadCustomTemplates(),
   compatibility: null,
   releases: [],
   topology: null,
@@ -88,6 +89,7 @@ const els = {
   providerMatrix: document.querySelector("#providerMatrix"),
   discoveryList: document.querySelector("#discoveryList"),
   templateStrip: document.querySelector("#templateStrip"),
+  templateFile: document.querySelector("#templateFile"),
   topologyMap: document.querySelector("#topologyMap"),
   releaseList: document.querySelector("#releaseList"),
   aboutGrid: document.querySelector("#aboutGrid"),
@@ -237,6 +239,8 @@ function wireEvents() {
     els.siteYaml.value = exampleYaml;
     renderDeploymentSummary(exampleSpec());
   });
+  els.templateFile?.addEventListener("change", handleTemplateFileUpload);
+  document.querySelector("#clearImportedTemplates")?.addEventListener("click", clearImportedTemplates);
   document.querySelector("#saveSite").addEventListener("click", () => saveSite(parseTinyYaml(els.siteYaml.value)));
   document.querySelector("#generateDesiredState").addEventListener("click", () => {
     const spec = deploymentSpecFromForm();
@@ -1198,13 +1202,14 @@ function applyIsoSelection(name, source = "registered", target = "registry") {
 
 function renderTemplates() {
   if (!els.templateStrip) return;
-  els.templateStrip.innerHTML = state.templates.map((template) => `
+  const templates = [...state.templates, ...state.customTemplates];
+  els.templateStrip.innerHTML = templates.map((template) => `
     <button class="template-card" data-template="${escapeHtml(template.id)}">
-      <strong>${escapeHtml(template.name)}</strong>
+      <strong>${escapeHtml(template.name)}${template.source === "imported" ? ` <span class="badge">imported</span>` : ""}</strong>
       <span>${escapeHtml(template.description)}</span>
       <small>${escapeHtml(template.platform)} - ${escapeHtml(template.nodes)} nodes</small>
     </button>
-  `).join("") || `<div class="settings-empty">Templates unavailable.</div>`;
+  `).join("") || `<div class="settings-empty">No templates loaded. Sign in to load built-in templates or import one below.</div>`;
 }
 
 function renderTopology() {
@@ -1741,7 +1746,7 @@ async function handleDocumentActions(event) {
   }
   const template = event.target.closest("[data-template]");
   if (template) {
-    const selected = state.templates.find((item) => item.id === template.dataset.template);
+    const selected = [...state.templates, ...state.customTemplates].find((item) => item.id === template.dataset.template);
     if (selected?.spec) {
       hydrateDeploymentForm(selected.spec);
       els.siteYaml.value = toYaml(selected.spec);
@@ -2053,6 +2058,11 @@ async function handleDocumentSubmit(event) {
     });
     writeResult("discovery planned", planned);
     await loadDiscovery();
+    return;
+  }
+  if (event.target.id === "templateImportForm") {
+    event.preventDefault();
+    importTemplateFromText();
     return;
   }
   if (event.target.id === "isoForm") {
@@ -2417,6 +2427,83 @@ function renderDeploymentSummary(spec) {
     nodes: spec.hardware.nodes.length,
     workloads: Object.entries(spec.workloads).filter(([, enabled]) => enabled).map(([name]) => name),
   }, null, 2);
+}
+
+async function handleTemplateFileUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  document.querySelector("#templateContent").value = await file.text();
+  if (!value("#templateName")) setValue("#templateName", file.name.replace(/\.(json|ya?ml)$/i, ""));
+}
+
+function importTemplateFromText() {
+  const content = value("#templateContent");
+  if (!content) {
+    writeResult("template import failed", { error: "paste or upload template content first" });
+    return;
+  }
+  try {
+    const parsed = parseTemplateContent(content);
+    const template = normalizeImportedTemplate(parsed);
+    state.customTemplates = [
+      ...state.customTemplates.filter((item) => item.id !== template.id),
+      template,
+    ];
+    saveCustomTemplates();
+    renderTemplates();
+    hydrateDeploymentForm(template.spec);
+    els.siteYaml.value = toYaml(template.spec);
+    renderDeploymentSummary(template.spec);
+    writeResult("template imported", { template: template.id, name: template.name, platform: template.platform });
+  } catch (error) {
+    writeResult("template import failed", { error: error.message });
+  }
+}
+
+function parseTemplateContent(content) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    return parseTinyYaml(content);
+  }
+}
+
+function normalizeImportedTemplate(payload) {
+  const spec = payload.spec || payload.site_spec || payload;
+  const issues = validateDeploymentSpec(spec);
+  if (issues.length) throw new Error(`template readiness failed: ${issues.join(" ")}`);
+  const name = value("#templateName") || payload.name || spec.site?.name || "Imported Template";
+  const description = value("#templateDescription") || payload.description || `Imported template for ${spec.platform?.type || "platform"}`;
+  return {
+    id: slugify(name),
+    name,
+    description,
+    source: "imported",
+    use_case: spec.site?.deployment_model || "custom",
+    hardware_provider: spec.hardware?.vendor || "custom",
+    platform: spec.platform?.type || "custom",
+    nodes: spec.hardware?.nodes?.length || 0,
+    spec,
+  };
+}
+
+function loadCustomTemplates() {
+  try {
+    return JSON.parse(localStorage.getItem("strataone.customTemplates") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomTemplates() {
+  localStorage.setItem("strataone.customTemplates", JSON.stringify(state.customTemplates));
+}
+
+function clearImportedTemplates() {
+  state.customTemplates = [];
+  saveCustomTemplates();
+  renderTemplates();
+  writeResult("templates cleared", { status: "imported templates removed from this browser" });
 }
 
 function validateDeploymentSpec(spec) {
@@ -2874,6 +2961,14 @@ function formatBytes(value) {
   if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function slugify(value) {
+  return String(value || "template")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "template";
 }
 
 function sleep(ms) {
