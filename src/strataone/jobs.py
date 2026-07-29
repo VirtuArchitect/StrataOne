@@ -18,12 +18,15 @@ class JobRunner:
     def __init__(self, store: StrataStore, max_workers: int = 4) -> None:
         self.store = store
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._volatile_params: dict[str, dict[str, Any]] = {}
 
     def submit(self, site_name: str, action: str, params: dict[str, Any] | None = None) -> str:
-        job = self.store.create_job(site_name, action, params or {})
+        raw_params = params or {}
+        job = self.store.create_job(site_name, action, raw_params)
         execution_mode = os.getenv("STRATAONE_EXECUTION_MODE", "inline").lower()
         queue = get_job_queue()
         if execution_mode == "inline":
+            self._volatile_params[job.id] = raw_params
             self.executor.submit(self._run, job.id)
         elif queue is not None:
             queue.enqueue(job.id)
@@ -55,7 +58,7 @@ class JobRunner:
                 raise ValueError(f"site {job.site_name} not found")
             spec = spec_from_record(site)
             self.store.add_job_event(job_id, "info", f"Executing {job.action}", {"site": spec.site.name})
-            params = {**job.params, "_job_id": job_id}
+            params = {**job.params, **self._volatile_params.pop(job_id, {}), "_job_id": job_id}
             result = self._execute(job.action, spec, params)
             self.store.finish_job(job_id, result)
         except Exception as exc:

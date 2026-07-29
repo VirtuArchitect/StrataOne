@@ -313,6 +313,13 @@ Run a worker directly with:
 strataone worker
 ```
 
+Production startup blocks insecure control-plane posture when
+`STRATAONE_ENVIRONMENT=production`. Before production use, configure non-default
+bootstrap, admin, and PostgreSQL passwords; keep authentication and tenant
+enforcement enabled; use PostgreSQL for durable state; and use Redis when queued
+execution is enabled. CI and container builds use `requirements-constraints.txt`
+to keep dependency resolution repeatable and auditable.
+
 Set `STRATAONE_REQUIRE_OEM_VALIDATION=true` to require OEM lab validation evidence before live Redfish operations are allowed. Validation records are read from `STRATAONE_OEM_VALIDATION_FILE`:
 
 ```json
@@ -410,8 +417,10 @@ The next implementation milestone is to implement provider-specific Azure Local 
 StrataOne now includes the core controls expected before lab production validation:
 
 - Authentication and enforced RBAC are available through bearer tokens and route permissions.
+- Tenant-scoped access covers sites, jobs, inventory, approvals, discovery runs, and artifact paths.
 - CORS is configurable by environment and wildcard origins are rejected when auth is enabled.
 - BMC credentials can be resolved from env, local secret files, or a Vault-compatible API.
+- Durable job, approval, audit, event, and discovery records redact sensitive values before storage.
 - Redfish virtual media and boot override calls have mock integration coverage.
 - PostgreSQL and Redis are available as the production state and queue backend.
 - Live Redfish operations can be blocked unless OEM lab validation evidence is registered.

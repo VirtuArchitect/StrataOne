@@ -45,12 +45,12 @@ const state = {
 const productInfo = {
   name: "StrataOne",
   edition: "Enterprise preview",
-  version: "0.3.0-preview",
+  version: "0.4.0-preview",
   developer: "John Goulden",
   organization: "VirtuArchitect",
   repository: "https://github.com/VirtuArchitect/StrataOne",
   license: "MIT",
-  apiVersion: "0.3.0",
+  apiVersion: "0.4.0",
 };
 
 const wizardSteps = ["intent", "hardware", "platform", "network", "review"];
