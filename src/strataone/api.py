@@ -337,6 +337,16 @@ def validate_secure_runtime_defaults() -> None:
         for name, blocked in insecure_values.items()
         if os.getenv(name, "") in blocked
     ]
+    if not auth_enabled():
+        failures.append("STRATAONE_AUTH_ENABLED")
+    if os.getenv("STRATAONE_STATE_BACKEND", "sqlite").lower() != "postgres":
+        failures.append("STRATAONE_STATE_BACKEND")
+    if os.getenv("STRATAONE_EXECUTION_MODE", "inline").lower() == "queued" and queue_backend() != "redis":
+        failures.append("STRATAONE_QUEUE_BACKEND")
+    if not os.getenv("STRATAONE_TENANT_ENFORCEMENT", "true").lower() in {"1", "true", "yes", "on"}:
+        failures.append("STRATAONE_TENANT_ENFORCEMENT")
+    if "*" in cors_origins():
+        failures.append("STRATAONE_CORS_ORIGINS")
     if failures:
         raise RuntimeError(f"production startup blocked by insecure default setting(s): {', '.join(failures)}")
 
@@ -569,8 +579,8 @@ def test_secret_ref(secret_name: str, context: AuthContext = manage_settings) ->
 
 
 @app.get("/discovery")
-def list_discovery(_: Any = read_sites) -> dict[str, Any]:
-    return {"runs": [item.model_dump(mode="json") for item in store.list_discovery_runs()]}
+def list_discovery(context: AuthContext = read_sites) -> dict[str, Any]:
+    return {"runs": [item.model_dump(mode="json") for item in store.list_discovery_runs(_tenant_scope(context))]}
 
 
 @app.post("/discovery")
@@ -592,14 +602,14 @@ def create_discovery(payload: DiscoveryPayload, context: AuthContext = Depends(r
         "candidates": [{"bmc_ip": address, "status": "pending-scan"} for address in candidates],
         "next_actions": ["Run Redfish reachability scan", "Classify reachable systems", "Import selected nodes into a deployment"],
     }
-    record = store.create_discovery_run(payload.name.strip() or "BMC discovery", str(network), provider.name, result)
+    record = store.create_discovery_run(payload.name.strip() or "BMC discovery", str(network), provider.name, result, tenant_id=_tenant_scope(context))
     store.add_audit(context.username, "discovery.plan", f"discovery:{record.id}", {"cidr": str(network), "provider": provider.name})
     return record.model_dump(mode="json")
 
 
 @app.post("/discovery/{run_id}/execute")
 def execute_discovery(run_id: str, context: AuthContext = Depends(require_permission("run-inventory", store))) -> dict[str, Any]:
-    run = store.get_discovery_run(run_id)
+    run = store.get_discovery_run(run_id, _tenant_scope(context))
     if run is None:
         raise HTTPException(status_code=404, detail="discovery run not found")
     live = os.getenv("STRATAONE_ENABLE_LIVE_REDFISH", "false").lower() in {"1", "true", "yes", "on"}
@@ -621,21 +631,21 @@ def execute_discovery(run_id: str, context: AuthContext = Depends(require_permis
         "scanned_count": len(scanned),
     }
     status = "completed" if live else "ready-for-live-scan"
-    updated = store.update_discovery_run(run_id, status, result)
+    updated = store.update_discovery_run(run_id, status, result, _tenant_scope(context))
     store.add_audit(context.username, "discovery.execute", f"discovery:{run_id}", {"status": status, "live": live})
     return updated.model_dump(mode="json") if updated else run.model_dump(mode="json")
 
 
 @app.delete("/discovery/{run_id}")
 def delete_discovery(run_id: str, context: AuthContext = Depends(require_permission("run-inventory", store))) -> dict[str, bool]:
-    deleted = store.delete_discovery_run(run_id)
+    deleted = store.delete_discovery_run(run_id, _tenant_scope(context))
     store.add_audit(context.username, "discovery.delete", f"discovery:{run_id}", {"deleted": deleted})
     return {"deleted": deleted}
 
 
 @app.post("/discovery/{run_id}/import")
 def import_discovery(run_id: str, payload: DiscoveryImportPayload, context: AuthContext = Depends(require_permission("create-sites", store))) -> dict[str, Any]:
-    run = store.get_discovery_run(run_id)
+    run = store.get_discovery_run(run_id, _tenant_scope(context))
     if run is None:
         raise HTTPException(status_code=404, detail="discovery run not found")
     selected = set(payload.selected_bmc_ips)
@@ -677,7 +687,7 @@ def import_discovery(run_id: str, payload: DiscoveryImportPayload, context: Auth
             "workloads": {},
         }
     )
-    site = store.upsert_site(spec)
+    site = store.upsert_site(spec, tenant_id=_tenant_scope(context))
     store.add_audit(context.username, "discovery.import", f"site:{site.name}", {"discovery_id": run_id, "nodes": len(nodes)})
     return site.model_dump(mode="json")
 

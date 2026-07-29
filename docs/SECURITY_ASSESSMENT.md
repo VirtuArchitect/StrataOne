@@ -1,8 +1,8 @@
 # Security Assessment Summary
 
-Assessment date: 2026-06-05
+Assessment date: 2026-07-29
 
-Project version: StrataOne 0.3.0
+Project version: StrataOne 0.4.0
 
 Assessment type: Local defensive repository assessment and targeted API security validation.
 
@@ -28,16 +28,16 @@ Commands executed during validation:
 ```powershell
 python -m pytest -q
 python -m pip_audit --skip-editable
-python -m bandit -r src --severity-level high
+python -m bandit -r src --severity-level medium
 docker compose config --quiet
 git diff --check
 ```
 
 Latest local results:
 
-- Unit and regression tests: `72 passed`
+- Unit and regression tests: `78 passed`
 - Dependency audit: no known vulnerabilities found
-- Static security scan: no high-severity Bandit findings
+- Static security scan: no medium-or-high-severity Bandit findings
 - Docker Compose configuration: valid
 - Git diff whitespace check: clean
 
@@ -53,8 +53,11 @@ The assessment identified and remediated the following security issues:
 | SSRF | ISO validation and notification webhook tests could call arbitrary local/private targets. | Outbound URL validation now blocks localhost, private, reserved, link-local, multicast, and unresolved targets. |
 | Token handling | Dashboard sessions used persistent local storage and WebSocket query tokens. | Dashboard tokens now use session storage, and authenticated live event streaming avoids bearer tokens in URLs. |
 | Audit secrecy | Provider configuration audit events could include sensitive values. | Provider configuration audit payloads now redact sensitive key names. |
+| Discovery tenancy | Discovery runs were globally visible and import wrote sites outside the requester tenant scope. | Discovery runs are tenant-owned and scoped for list, execute, delete, and import; imported sites inherit requester tenant scope. |
+| Durable secret exposure | Transient job credentials could be persisted in job params, approval details, and operational event data. | Durable job params, approvals, audit details, job events, and discovery results are redacted before storage; inline execution keeps one-time params in memory only. |
 | Dependency hygiene | Dev dependency declaration used `httpx2`; local audit flagged vulnerable pytest. | Dev dependencies now use `httpx`, pytest is pinned to a fixed major line, and audit tools are included. |
-| CI visibility | CI did not run dependency or static security gates. | CI now runs tests, `pip-audit`, Bandit high-severity scanning, Docker build, and Compose validation. |
+| Dependency repeatability | CI and container builds resolved dependencies without a shared constraints file. | CI and Docker installs now use `requirements-constraints.txt` with audited minimum versions. |
+| CI visibility | CI did not run dependency or static security gates. | CI now runs tests, `pip-audit`, Bandit medium-or-higher severity scanning, Docker build, and Compose validation. |
 
 ## Current Security Controls
 
@@ -63,14 +66,16 @@ Implemented controls include:
 - Bearer-token and local password session authentication.
 - RBAC route enforcement.
 - Server-side session revocation.
-- Tenant-scoped site, job, inventory, approval, and artifact access.
+- Tenant-scoped site, job, inventory, approval, discovery, and artifact access.
 - Configurable CORS with wildcard rejection when auth is enabled.
 - Security headers and CSP through API/proxy/dashboard configuration.
 - Rate limiting middleware.
 - Approval gates for protected live-impact actions.
 - Secret reference model with environment, file, and Vault-compatible providers.
 - Production startup guard for known placeholder credentials.
+- Production startup guard for auth, tenant enforcement, PostgreSQL state, and Redis queue posture.
 - Dependency audit and static security gates in CI.
+- Durable redaction for sensitive job, approval, audit, event, and discovery payloads.
 
 ## Limitations
 
@@ -89,8 +94,7 @@ Before production use, StrataOne should still undergo environment-specific valid
 - Add third-party penetration testing before production customer deployment.
 - Add live lab validation evidence for each hardware and hypervisor provider.
 - Add SAST/DAST reporting artifacts to CI.
-- Add dependency lockfiles or SBOM generation.
+- Generate SBOMs and signed release attestations.
 - Add container image vulnerability scanning.
 - Add OIDC/SAML enterprise identity provider integration.
 - Add centralized audit export to SIEM or log analytics.
-

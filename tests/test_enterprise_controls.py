@@ -77,6 +77,44 @@ def test_tenant_scoped_token_cannot_read_other_tenant_job(monkeypatch) -> None:
     assert events_from_b.status_code == 404
 
 
+def test_tenant_scoped_token_only_lists_and_imports_own_discovery(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "bootstrap")
+    monkeypatch.setenv("STRATAONE_API_TOKENS", "tenant-a=tenant.a:Deployment Admin,Operator,Viewer@tenant-a;tenant-b=tenant.b:Deployment Admin,Operator,Viewer@tenant-b")
+    client = TestClient(app)
+
+    created = client.post(
+        "/discovery",
+        json={"name": "Tenant A scan", "cidr": "10.20.30.0/30", "provider": "generic-redfish"},
+        headers={"Authorization": "Bearer tenant-a"},
+    )
+    run_id = created.json()["id"]
+    list_a = client.get("/discovery", headers={"Authorization": "Bearer tenant-a"})
+    list_b = client.get("/discovery", headers={"Authorization": "Bearer tenant-b"})
+    execute_from_b = client.post(f"/discovery/{run_id}/execute", headers={"Authorization": "Bearer tenant-b"})
+    import_from_b = client.post(
+        f"/discovery/{run_id}/import",
+        json={"site_name": "tenant-b-imported", "location": "lab", "selected_bmc_ips": ["10.20.30.1"]},
+        headers={"Authorization": "Bearer tenant-b"},
+    )
+    import_from_a = client.post(
+        f"/discovery/{run_id}/import",
+        json={"site_name": "tenant-a-imported-discovery", "location": "lab", "selected_bmc_ips": ["10.20.30.1"]},
+        headers={"Authorization": "Bearer tenant-a"},
+    )
+    get_imported_from_b = client.get("/sites/tenant-a-imported-discovery", headers={"Authorization": "Bearer tenant-b"})
+
+    assert created.status_code == 200
+    assert created.json()["tenant_id"] == "tenant-a"
+    assert any(run["id"] == run_id for run in list_a.json()["runs"])
+    assert all(run["id"] != run_id for run in list_b.json()["runs"])
+    assert execute_from_b.status_code == 404
+    assert import_from_b.status_code == 404
+    assert import_from_a.status_code == 200
+    assert import_from_a.json()["tenant_id"] == "tenant-a"
+    assert get_imported_from_b.status_code == 404
+
+
 def test_site_name_rejects_path_traversal() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()
@@ -128,6 +166,11 @@ def test_production_startup_rejects_placeholder_secrets(monkeypatch) -> None:
     monkeypatch.setenv("STRATAONE_BOOTSTRAP_TOKEN", "change-this-token")
     monkeypatch.setenv("STRATAONE_ADMIN_PASSWORD", "change-this-password")
     monkeypatch.setenv("POSTGRES_PASSWORD", "strataone")
+    monkeypatch.setenv("STRATAONE_AUTH_ENABLED", "false")
+    monkeypatch.setenv("STRATAONE_STATE_BACKEND", "sqlite")
+    monkeypatch.setenv("STRATAONE_EXECUTION_MODE", "queued")
+    monkeypatch.setenv("STRATAONE_QUEUE_BACKEND", "memory")
+    monkeypatch.setenv("STRATAONE_TENANT_ENFORCEMENT", "false")
 
     try:
         validate_secure_runtime_defaults()
@@ -139,6 +182,43 @@ def test_production_startup_rejects_placeholder_secrets(monkeypatch) -> None:
     assert "STRATAONE_BOOTSTRAP_TOKEN" in message
     assert "STRATAONE_ADMIN_PASSWORD" in message
     assert "POSTGRES_PASSWORD" in message
+    assert "STRATAONE_AUTH_ENABLED" in message
+    assert "STRATAONE_STATE_BACKEND" in message
+    assert "STRATAONE_QUEUE_BACKEND" in message
+    assert "STRATAONE_TENANT_ENFORCEMENT" in message
+
+
+def test_durable_job_approval_and_audit_details_redact_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_REQUIRE_APPROVALS", "true")
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    site["site"]["name"] = "redaction-site"
+    client.post("/sites", json={"site": site})
+
+    job = client.post(
+        "/sites/redaction-site/jobs/validate",
+        json={"username": "admin", "password": "super-secret-password"},
+    ).json()
+    stored_job = client.get(f"/jobs/{job['job_id']}").json()
+    approval = client.post(
+        "/sites/redaction-site/jobs/mount-iso",
+        json={
+            "username": "admin",
+            "password": "approval-secret-password",
+            "iso_url": "https://repo.example.com/azure-local.iso",
+        },
+    ).json()
+    approvals = client.get("/approvals").json()["approvals"]
+    client.post("/providers/generic-redfish/config", json={"config": {"password": "provider-secret", "credential_ref": "branch-bmc"}})
+    audit = client.get("/audit?limit=10").json()["audit"]
+
+    approval_record = next(item for item in approvals if item["id"] == approval["approval_id"])
+    provider_audit = next(item for item in audit if item["action"] == "provider.config.upsert")
+    assert stored_job["params"]["password"] == "***"
+    assert stored_job["params"]["username"] == "admin"
+    assert approval_record["detail"]["params"]["password"] == "***"
+    assert provider_audit["detail"]["password"] == "***"
+    assert provider_audit["detail"]["credential_ref"] == "***"
 
 
 def test_provider_validation_harness_records_contract_run() -> None:

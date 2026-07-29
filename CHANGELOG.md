@@ -6,6 +6,28 @@ The format follows the spirit of Keep a Changelog, and this project currently us
 
 ## [Unreleased]
 
+## [0.4.0-preview] - 2026-07-29
+
+### Added
+
+- Production control-plane hardening constraints for repeatable CI and container dependency resolution.
+- Startup validation for production auth, PostgreSQL state, Redis queueing, tenant enforcement, and placeholder secrets.
+- Regression tests for tenant-scoped discovery, discovery import ownership, and durable redaction of sensitive job, approval, and audit details.
+
+### Changed
+
+- Discovery runs are now tenant-owned and scoped across list, execute, delete, and import workflows.
+- Discovery imports now create managed sites under the requesting tenant scope.
+- Job parameters, approval details, audit details, job events, and discovery results are redacted before durable persistence.
+- Inline jobs keep transient credentials in memory for the current process while storing only redacted durable job parameters.
+- CI and Docker installs now use `requirements-constraints.txt`.
+- The API container now runs as a dedicated non-root `strataone` user.
+
+### Security
+
+- Closed a discovery tenant-isolation gap where one tenant could see or act on another tenant's discovery run.
+- Reduced durable credential exposure risk for transient BMC credentials and sensitive operational metadata.
+
 ## [0.3.0-preview] - 2026-06-04
 
 ### Added

@@ -152,6 +152,7 @@ class SecretRefRecord(BaseModel):
 
 class DiscoveryRunRecord(BaseModel):
     id: str
+    tenant_id: str = "default"
     name: str
     cidr: str
     provider: str
@@ -423,6 +424,7 @@ class StrataStore:
                 """
                 CREATE TABLE IF NOT EXISTS discovery_runs (
                     id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
                     name TEXT NOT NULL,
                     cidr TEXT NOT NULL,
                     provider TEXT NOT NULL,
@@ -465,6 +467,7 @@ class StrataStore:
                 self._ensure_column(conn, "approvals", "required_approvals", "INTEGER NOT NULL DEFAULT 1")
                 self._ensure_column(conn, "approvals", "approver_roles_json", "TEXT NOT NULL DEFAULT '[]'")
                 self._ensure_column(conn, "approvals", "expires_at", "TEXT")
+                self._ensure_column(conn, "discovery_runs", "tenant_id", "TEXT NOT NULL DEFAULT 'default'")
             if self.backend == "postgres":
                 conn.execute("ALTER TABLE sites ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'")
                 conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'")
@@ -475,6 +478,7 @@ class StrataStore:
                 conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS required_approvals INTEGER NOT NULL DEFAULT 1")
                 conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approver_roles_json TEXT NOT NULL DEFAULT '[]'")
                 conn.execute("ALTER TABLE approvals ADD COLUMN IF NOT EXISTS expires_at TEXT")
+                conn.execute("ALTER TABLE discovery_runs ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'")
         self.apply_migrations()
         self.seed_access_defaults()
 
@@ -487,6 +491,7 @@ class StrataStore:
             ("005_approval_policy", "Configurable approval policy rules"),
             ("006_approval_votes_provider_validation", "Approval votes and provider validation evidence"),
             ("007_tenant_provider_validation_runs", "Tenant metadata and live provider validation run history"),
+            ("008_control_plane_hardening", "Tenant-scoped discovery and persisted secret redaction"),
         ]
         applied = {item.version for item in self.list_migrations()}
         with self._connect() as conn:
@@ -567,7 +572,7 @@ class StrataStore:
                 INSERT INTO jobs (id, tenant_id, site_name, action, status, params_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, tenant_id, site_name, action, "queued", json.dumps(params or {}), now),
+                (job_id, tenant_id, site_name, action, "queued", json.dumps(redact_sensitive(params or {})), now),
             )
         return self.get_job(job_id)  # type: ignore[return-value]
 
@@ -901,9 +906,9 @@ class StrataStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO audit_log (id, actor, action, resource, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (audit_id, actor, action, resource, json.dumps(detail or {}), now),
+                (audit_id, actor, action, resource, json.dumps(redact_sensitive(detail or {})), now),
             )
-        return AuditRecord(id=audit_id, actor=actor, action=action, resource=resource, detail=detail or {}, created_at=now)
+        return AuditRecord(id=audit_id, actor=actor, action=action, resource=resource, detail=redact_sensitive(detail or {}), created_at=now)
 
     def list_audit(self, limit: int = 100) -> list[AuditRecord]:
         with self._connect() as conn:
@@ -936,7 +941,7 @@ class StrataStore:
                     action,
                     "pending",
                     requested_by,
-                    json.dumps(detail or {}),
+                    json.dumps(redact_sensitive(detail or {})),
                     "[]",
                     max(1, required_approvals),
                     json.dumps(approver_roles or []),
@@ -1059,9 +1064,9 @@ class StrataStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO job_events (id, job_id, level, message, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (event_id, job_id, level, message, json.dumps(detail or {}), now),
+                (event_id, job_id, level, message, json.dumps(redact_sensitive(detail or {})), now),
             )
-        return JobEventRecord(id=event_id, job_id=job_id, level=level, message=message, detail=detail or {}, created_at=now)
+        return JobEventRecord(id=event_id, job_id=job_id, level=level, message=message, detail=redact_sensitive(detail or {}), created_at=now)
 
     def list_job_events(self, job_id: str) -> list[JobEventRecord]:
         with self._connect() as conn:
@@ -1190,40 +1195,55 @@ class StrataStore:
             result = conn.execute("DELETE FROM secret_refs WHERE name = ?", (name,))
         return result.rowcount > 0
 
-    def create_discovery_run(self, name: str, cidr: str, provider: str, result: dict[str, Any], status: str = "planned") -> DiscoveryRunRecord:
+    def create_discovery_run(self, name: str, cidr: str, provider: str, result: dict[str, Any], status: str = "planned", tenant_id: str = "default") -> DiscoveryRunRecord:
         run_id = str(uuid.uuid4())
         now = _now()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO discovery_runs (id, name, cidr, provider, status, result_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO discovery_runs (id, tenant_id, name, cidr, provider, status, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (run_id, name, cidr, provider, status, json.dumps(result), now, now),
+                (run_id, tenant_id, name, cidr, provider, status, json.dumps(redact_sensitive(result)), now, now),
             )
-        return self.get_discovery_run(run_id)  # type: ignore[return-value]
+        return self.get_discovery_run(run_id, tenant_id)  # type: ignore[return-value]
 
-    def update_discovery_run(self, run_id: str, status: str, result: dict[str, Any]) -> DiscoveryRunRecord | None:
+    def update_discovery_run(self, run_id: str, status: str, result: dict[str, Any], tenant_id: str | None = None) -> DiscoveryRunRecord | None:
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE discovery_runs SET status = ?, result_json = ?, updated_at = ? WHERE id = ?",
-                (status, json.dumps(result), _now(), run_id),
-            )
-        return self.get_discovery_run(run_id)
+            if tenant_id and tenant_id != "*":
+                conn.execute(
+                    "UPDATE discovery_runs SET status = ?, result_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+                    (status, json.dumps(redact_sensitive(result)), _now(), run_id, tenant_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE discovery_runs SET status = ?, result_json = ?, updated_at = ? WHERE id = ?",
+                    (status, json.dumps(redact_sensitive(result)), _now(), run_id),
+                )
+        return self.get_discovery_run(run_id, tenant_id)
 
-    def get_discovery_run(self, run_id: str) -> DiscoveryRunRecord | None:
+    def get_discovery_run(self, run_id: str, tenant_id: str | None = None) -> DiscoveryRunRecord | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM discovery_runs WHERE id = ?", (run_id,)).fetchone()
+            if tenant_id and tenant_id != "*":
+                row = conn.execute("SELECT * FROM discovery_runs WHERE id = ? AND tenant_id = ?", (run_id, tenant_id)).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM discovery_runs WHERE id = ?", (run_id,)).fetchone()
         return self._discovery_run_from_row(row) if row else None
 
-    def list_discovery_runs(self) -> list[DiscoveryRunRecord]:
+    def list_discovery_runs(self, tenant_id: str | None = None) -> list[DiscoveryRunRecord]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC").fetchall()
+            if tenant_id and tenant_id != "*":
+                rows = conn.execute("SELECT * FROM discovery_runs WHERE tenant_id = ? ORDER BY created_at DESC", (tenant_id,)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC").fetchall()
         return [self._discovery_run_from_row(row) for row in rows]
 
-    def delete_discovery_run(self, run_id: str) -> bool:
+    def delete_discovery_run(self, run_id: str, tenant_id: str | None = None) -> bool:
         with self._connect() as conn:
-            result = conn.execute("DELETE FROM discovery_runs WHERE id = ?", (run_id,))
+            if tenant_id and tenant_id != "*":
+                result = conn.execute("DELETE FROM discovery_runs WHERE id = ? AND tenant_id = ?", (run_id, tenant_id))
+            else:
+                result = conn.execute("DELETE FROM discovery_runs WHERE id = ?", (run_id,))
         return result.rowcount > 0
 
     def upsert_iso(self, name: str, uri: str, checksum: str | None = None, checksum_algorithm: str = "sha256", status: str = "registered") -> IsoRecord:
@@ -1425,6 +1445,7 @@ class StrataStore:
     def _discovery_run_from_row(self, row) -> DiscoveryRunRecord:
         return DiscoveryRunRecord(
             id=row["id"],
+            tenant_id=row["tenant_id"] if "tenant_id" in row.keys() else "default",
             name=row["name"],
             cidr=row["cidr"],
             provider=row["provider"],
@@ -1456,3 +1477,21 @@ def _now() -> str:
 
 def _postgres_sql(sql: str) -> str:
     return sql.replace("?", "%s")
+
+
+SENSITIVE_FIELD_MARKERS = ("password", "secret", "token", "key")
+
+
+def redact_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in SENSITIVE_FIELD_MARKERS):
+                redacted[key] = "***"
+            else:
+                redacted[key] = redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    return value
