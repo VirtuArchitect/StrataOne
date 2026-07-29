@@ -1,3 +1,7 @@
+<p>
+  <img src="dashboard/assets/strataone-logo.svg" alt="StrataOne logo" width="360" />
+</p>
+
 # StrataOne
 
 StrataOne is a vendor-agnostic, hypervisor-agnostic zero-touch orchestration framework for distributed infrastructure.
