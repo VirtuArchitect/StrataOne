@@ -1,8 +1,14 @@
+<p>
+  <img src="dashboard/assets/strataone-logo.svg" alt="StrataOne logo" width="360" />
+</p>
+
 # StrataOne
 
 StrataOne is a vendor-agnostic, hypervisor-agnostic zero-touch orchestration framework for distributed infrastructure.
 
 It is designed for enterprise edge, branch, ROBO, private cloud, and hybrid cloud environments where hardware vendors, hypervisors, and management planes vary by site.
+
+Live demo: [StrataOne Console Demo](https://strataone-console-demo.jag64.chatgpt.site)
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes and feature history.
 

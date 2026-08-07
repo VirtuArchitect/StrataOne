@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img">
+  <title>StrataOne Badge</title>
+  <desc>StrataOne layered infrastructure badge with an orchestration path.</desc>
+  <defs>
+    <linearGradient id="badge-bg" x1="12" y1="10" x2="84" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102027"/>
+      <stop offset="0.5" stop-color="#143A3F"/>
+      <stop offset="1" stop-color="#0A1419"/>
+    </linearGradient>
+    <linearGradient id="strata-line" x1="22" y1="28" x2="77" y2="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7CE7D1"/>
+      <stop offset="0.52" stop-color="#35B8C4"/>
+      <stop offset="1" stop-color="#8BD75A"/>
+    </linearGradient>
+    <filter id="badge-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#061114" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="6" y="6" width="84" height="84" rx="20" fill="url(#badge-bg)" filter="url(#badge-shadow)"/>
+  <path d="M21 30h54L63 42H33L21 30Z" fill="#F4FAF8" opacity="0.96"/>
+  <path d="M28 45h40L58 56H38L28 45Z" fill="#B7F1E5" opacity="0.92"/>
+  <path d="M35 60h26L49 73H47L35 60Z" fill="#8BD75A" opacity="0.95"/>
+  <path d="M25 30h50L59 56 48 73 37 56 25 30Z" fill="none" stroke="url(#strata-line)" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M48 30v43" stroke="#F8FFFC" stroke-width="4" stroke-linecap="round" opacity="0.88"/>
+  <circle cx="48" cy="30" r="5" fill="#FFCC66"/>
+  <circle cx="48" cy="73" r="6" fill="#F8FFFC"/>
+  <circle cx="29" cy="45" r="3.6" fill="#35B8C4"/>
+  <circle cx="67" cy="45" r="3.6" fill="#8BD75A"/>
+</svg>

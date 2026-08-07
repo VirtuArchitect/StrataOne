@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img">
+  <title>StrataOne Favicon</title>
+  <desc>Compact StrataOne layered infrastructure mark.</desc>
+  <rect width="64" height="64" rx="14" fill="#102027"/>
+  <path d="M14 19h36L42 28H22L14 19Z" fill="#F8FFFC"/>
+  <path d="M19 31h26L38 39H26L19 31Z" fill="#7CE7D1"/>
+  <path d="M24 43h16l-8 9-8-9Z" fill="#8BD75A"/>
+  <path d="M32 19v33" stroke="#F8FFFC" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="19" r="4" fill="#FFCC66"/>
+  <circle cx="32" cy="52" r="4.5" fill="#F8FFFC"/>
+</svg>

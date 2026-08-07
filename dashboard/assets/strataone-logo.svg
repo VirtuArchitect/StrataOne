@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96" role="img">
+  <title>StrataOne Logo</title>
+  <desc>StrataOne logo with layered infrastructure badge and wordmark.</desc>
+  <defs>
+    <linearGradient id="logo-bg" x1="8" y1="8" x2="88" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102027"/>
+      <stop offset="0.52" stop-color="#143A3F"/>
+      <stop offset="1" stop-color="#0A1419"/>
+    </linearGradient>
+    <linearGradient id="logo-line" x1="22" y1="27" x2="76" y2="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7CE7D1"/>
+      <stop offset="0.55" stop-color="#35B8C4"/>
+      <stop offset="1" stop-color="#8BD75A"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="80" height="80" rx="18" fill="url(#logo-bg)"/>
+  <path d="M22 30h52L62 42H34L22 30Z" fill="#F8FFFC"/>
+  <path d="M29 45h38L58 56H38L29 45Z" fill="#B7F1E5"/>
+  <path d="M36 60h24L49 73H47L36 60Z" fill="#8BD75A"/>
+  <path d="M25 30h50L59 56 48 73 37 56 25 30Z" fill="none" stroke="url(#logo-line)" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M48 30v43" stroke="#F8FFFC" stroke-width="4" stroke-linecap="round" opacity="0.88"/>
+  <circle cx="48" cy="30" r="5" fill="#FFCC66"/>
+  <circle cx="48" cy="73" r="6" fill="#F8FFFC"/>
+  <text x="108" y="49" fill="#102027" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="760" letter-spacing="0">StrataOne</text>
+  <text x="110" y="70" fill="#4C5B60" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="650" letter-spacing="1.5">INFRASTRUCTURE ORCHESTRATOR</text>
+</svg>
