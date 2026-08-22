@@ -14,6 +14,10 @@ from strataone.store import StrataStore, spec_from_record
 from strataone.validation import live_operation_allowed
 
 
+INLINE_CREDENTIAL_ACTIONS = {"inventory", "mount-iso", "eject-iso"}
+INLINE_CREDENTIAL_FIELDS = {"username", "password"}
+
+
 class JobRunner:
     def __init__(self, store: StrataStore, max_workers: int = 4) -> None:
         self.store = store
@@ -22,8 +26,10 @@ class JobRunner:
 
     def submit(self, site_name: str, action: str, params: dict[str, Any] | None = None) -> str:
         raw_params = params or {}
-        job = self.store.create_job(site_name, action, raw_params)
         execution_mode = os.getenv("STRATAONE_EXECUTION_MODE", "inline").lower()
+        if execution_mode == "queued" and _uses_inline_credentials(action, raw_params):
+            raise ValueError(f"{action} queued jobs require credential_ref or an environment/file/Vault secret provider")
+        job = self.store.create_job(site_name, action, raw_params)
         queue = get_job_queue()
         if execution_mode == "inline":
             self._volatile_params[job.id] = raw_params
@@ -317,3 +323,9 @@ class JobRunner:
             if resolved is not None:
                 return resolved
         return resolve_bmc_credentials(site_name, params)
+
+
+def _uses_inline_credentials(action: str, params: dict[str, Any]) -> bool:
+    if action not in INLINE_CREDENTIAL_ACTIONS or params.get("credential_ref"):
+        return False
+    return any(params.get(field) for field in INLINE_CREDENTIAL_FIELDS)

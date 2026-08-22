@@ -1065,7 +1065,11 @@ def run_site_job(site_name: str, action: str, payload: JobPayload | None = None,
             )
             store.add_audit(context.username, "approval.requested", f"approval:{pending.id}", {"site": site_name, "action": action, "required_approvals": pending.required_approvals})
             return {"approval_id": pending.id, "status": "approval-required"}
-    return {"job_id": jobs.submit(site_name, action, params)}
+    try:
+        job_id = jobs.submit(site_name, action, params)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"job_id": job_id}
 
 
 @app.get("/jobs")
@@ -1229,7 +1233,10 @@ def approve_and_run(approval_id: str, context: AuthContext = Depends(require_per
         return {"approval": approval.model_dump(mode="json"), "job_id": None, "status": "pending-approval"}
     params = dict(approval.detail.get("params") or {})
     params["approval_id"] = approval_id
-    job_id = jobs.submit(approval.site_name, approval.action, params)
+    try:
+        job_id = jobs.submit(approval.site_name, approval.action, params)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     store.add_audit(context.username, "approval.approved.run", f"approval:{approval_id}", {"job_id": job_id, "action": approval.action, "site": approval.site_name})
     return {"approval": approval.model_dump(mode="json"), "job_id": job_id, "status": "queued"}
 

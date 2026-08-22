@@ -79,6 +79,36 @@ def test_job_runner_can_leave_jobs_for_durable_worker(tmp_path: Path, monkeypatc
     assert job.result["valid"] is True
 
 
+def test_queued_inventory_rejects_inline_credentials(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_EXECUTION_MODE", "queued")
+    store = StrataStore(tmp_path / "strataone.db")
+    store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
+    runner = JobRunner(store)
+
+    try:
+        runner.submit("branch-001", "inventory", {"username": "admin", "password": "secret"})
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("queued inventory accepted inline credentials")
+
+    assert "credential_ref" in message
+    assert store.list_jobs("branch-001") == []
+
+
+def test_queued_inventory_accepts_credential_ref(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_EXECUTION_MODE", "queued")
+    store = StrataStore(tmp_path / "strataone.db")
+    store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
+    runner = JobRunner(store)
+
+    job_id = runner.submit("branch-001", "inventory", {"credential_ref": "branch-bmc"})
+
+    job = store.get_job(job_id)
+    assert job.status == "queued"
+    assert job.params == {"credential_ref": "branch-bmc"}
+
+
 def test_job_runner_dispatches_queued_jobs_to_queue_backend(tmp_path: Path, monkeypatch) -> None:
     dispatched = []
 

@@ -60,6 +60,21 @@ def test_persistent_site_job_and_provider_endpoints() -> None:
     assert "job_id" in jobs_response.json()
 
 
+def test_queued_inventory_api_rejects_inline_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_EXECUTION_MODE", "queued")
+    client = TestClient(app)
+    site = client.get("/sites/example").json()
+    client.post("/sites", json={"site": site})
+
+    response = client.post(
+        "/sites/branch-001/jobs/inventory",
+        json={"username": "admin", "password": "secret"},
+    )
+
+    assert response.status_code == 422
+    assert "credential_ref" in response.json()["detail"]
+
+
 def test_site_validation_rejects_invalid_bmc_ip() -> None:
     client = TestClient(app)
     site = client.get("/sites/example").json()

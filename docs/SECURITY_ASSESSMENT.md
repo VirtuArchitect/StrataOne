@@ -29,15 +29,17 @@ Commands executed during validation:
 python -m pytest -q
 python -m pip_audit --skip-editable
 python -m bandit -r src --severity-level medium
+python -m cyclonedx_py environment --output-format JSON --output-file sbom.cdx.json
 docker compose config --quiet
 git diff --check
 ```
 
 Latest local results:
 
-- Unit and regression tests: `78 passed`
+- Unit and regression tests: `81 passed`
 - Dependency audit: no known vulnerabilities found
 - Static security scan: no medium-or-high-severity Bandit findings
+- SBOM and attestation: CI generates a CycloneDX SBOM and GitHub SBOM attestation for the built wheel
 - Docker Compose configuration: valid
 - Git diff whitespace check: clean
 
@@ -55,9 +57,10 @@ The assessment identified and remediated the following security issues:
 | Audit secrecy | Provider configuration audit events could include sensitive values. | Provider configuration audit payloads now redact sensitive key names. |
 | Discovery tenancy | Discovery runs were globally visible and import wrote sites outside the requester tenant scope. | Discovery runs are tenant-owned and scoped for list, execute, delete, and import; imported sites inherit requester tenant scope. |
 | Durable secret exposure | Transient job credentials could be persisted in job params, approval details, and operational event data. | Durable job params, approvals, audit details, job events, and discovery results are redacted before storage; inline execution keeps one-time params in memory only. |
+| Queued credential safety | Queued workers could receive redacted inline credentials and fail later. | Queued inventory and virtual-media jobs reject inline username/password payloads and require `credential_ref` or a configured secret provider. |
 | Dependency hygiene | Dev dependency declaration used `httpx2`; local audit flagged vulnerable pytest. | Dev dependencies now use `httpx`, pytest is pinned to a fixed major line, and audit tools are included. |
 | Dependency repeatability | CI and container builds resolved dependencies without a shared constraints file. | CI and Docker installs now use `requirements-constraints.txt` with audited minimum versions. |
-| CI visibility | CI did not run dependency or static security gates. | CI now runs tests, `pip-audit`, Bandit medium-or-higher severity scanning, Docker build, and Compose validation. |
+| CI visibility | CI did not run dependency, static security, or supply-chain evidence gates. | CI now runs tests, `pip-audit`, Bandit medium-or-higher severity scanning, SBOM generation and attestation, Docker build, and Compose validation. |
 
 ## Current Security Controls
 
@@ -76,6 +79,8 @@ Implemented controls include:
 - Production startup guard for auth, tenant enforcement, PostgreSQL state, and Redis queue posture.
 - Dependency audit and static security gates in CI.
 - Durable redaction for sensitive job, approval, audit, event, and discovery payloads.
+- Queued job credential guard requiring `credential_ref` or a secret provider for worker-executed BMC actions.
+- CycloneDX SBOM generation and GitHub SBOM attestation in CI.
 
 ## Limitations
 
@@ -94,7 +99,6 @@ Before production use, StrataOne should still undergo environment-specific valid
 - Add third-party penetration testing before production customer deployment.
 - Add live lab validation evidence for each hardware and hypervisor provider.
 - Add SAST/DAST reporting artifacts to CI.
-- Generate SBOMs and signed release attestations.
 - Add container image vulnerability scanning.
 - Add OIDC/SAML enterprise identity provider integration.
 - Add centralized audit export to SIEM or log analytics.
