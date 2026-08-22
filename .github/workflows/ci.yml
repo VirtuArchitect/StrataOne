@@ -84,5 +84,49 @@ jobs:
       - name: Build API image
         run: docker build -t strataone-api:ci .
 
+      - name: Scan API image with Trivy table report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: strataone-api:ci
+          format: table
+          output: trivy-container-report.txt
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Scan API image with Trivy SARIF report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: strataone-api:ci
+          format: sarif
+          output: trivy-container-report.sarif
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload container scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: strataone-container-scan
+          path: |
+            trivy-container-report.txt
+            trivy-container-report.sarif
+
+      - name: Enforce container vulnerability gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: strataone-api:ci
+          format: table
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
       - name: Validate Compose configuration
         run: docker compose config
