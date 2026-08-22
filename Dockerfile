@@ -5,6 +5,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md CHANGELOG.md LICENSE requirements-constraints.txt ./
 COPY src ./src
 COPY examples ./examples

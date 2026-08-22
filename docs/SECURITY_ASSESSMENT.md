@@ -30,6 +30,7 @@ python -m pytest -q
 python -m pip_audit --skip-editable
 python -m bandit -r src --severity-level medium
 python -m cyclonedx_py environment --output-format JSON --output-file sbom.cdx.json
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 strataone-api:ci
 docker compose config --quiet
 git diff --check
 ```
@@ -40,6 +41,7 @@ Latest local results:
 - Dependency audit: no known vulnerabilities found
 - Static security scan: no medium-or-high-severity Bandit findings
 - SBOM and attestation: CI generates a CycloneDX SBOM and GitHub SBOM attestation for the built wheel
+- Container image vulnerability scan: CI uploads Trivy table and SARIF reports and fails on fixable high/critical findings
 - Docker Compose configuration: valid
 - Git diff whitespace check: clean
 
@@ -60,7 +62,7 @@ The assessment identified and remediated the following security issues:
 | Queued credential safety | Queued workers could receive redacted inline credentials and fail later. | Queued inventory and virtual-media jobs reject inline username/password payloads and require `credential_ref` or a configured secret provider. |
 | Dependency hygiene | Dev dependency declaration used `httpx2`; local audit flagged vulnerable pytest. | Dev dependencies now use `httpx`, pytest is pinned to a fixed major line, and audit tools are included. |
 | Dependency repeatability | CI and container builds resolved dependencies without a shared constraints file. | CI and Docker installs now use `requirements-constraints.txt` with audited minimum versions. |
-| CI visibility | CI did not run dependency, static security, or supply-chain evidence gates. | CI now runs tests, `pip-audit`, Bandit medium-or-higher severity scanning, SBOM generation and attestation, Docker build, and Compose validation. |
+| CI visibility | CI did not run dependency, static security, container image scanning, or supply-chain evidence gates. | CI now runs tests, `pip-audit`, Bandit medium-or-higher severity scanning, SBOM generation and attestation, Docker build, Trivy container vulnerability scanning, and Compose validation. |
 
 ## Current Security Controls
 
@@ -81,6 +83,7 @@ Implemented controls include:
 - Durable redaction for sensitive job, approval, audit, event, and discovery payloads.
 - Queued job credential guard requiring `credential_ref` or a secret provider for worker-executed BMC actions.
 - CycloneDX SBOM generation and GitHub SBOM attestation in CI.
+- Trivy container image vulnerability scanning with uploaded reports and a high/critical fixable-CVE gate.
 
 ## Limitations
 
@@ -99,6 +102,5 @@ Before production use, StrataOne should still undergo environment-specific valid
 - Add third-party penetration testing before production customer deployment.
 - Add live lab validation evidence for each hardware and hypervisor provider.
 - Add SAST/DAST reporting artifacts to CI.
-- Add container image vulnerability scanning.
 - Add OIDC/SAML enterprise identity provider integration.
 - Add centralized audit export to SIEM or log analytics.

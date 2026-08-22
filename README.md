@@ -330,7 +330,9 @@ bootstrap, admin, and PostgreSQL passwords; keep authentication and tenant
 enforcement enabled; use PostgreSQL for durable state; and use Redis when queued
 execution is enabled. CI and container builds use `requirements-constraints.txt`
 to keep dependency resolution repeatable and auditable. CI also generates a
-CycloneDX SBOM and publishes a GitHub attestation for the built wheel.
+CycloneDX SBOM, publishes a GitHub attestation for the built wheel, and scans
+the API container image with Trivy. The container gate fails on fixable
+high/critical vulnerabilities and uploads table and SARIF scan reports.
 
 Set `STRATAONE_REQUIRE_OEM_VALIDATION=true` to require OEM lab validation evidence before live Redfish operations are allowed. Validation records are read from `STRATAONE_OEM_VALIDATION_FILE`:
 
