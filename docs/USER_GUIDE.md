@@ -88,6 +88,8 @@ Each job has:
 
 Reports include job metadata, site state, events, and status summary.
 
+For Azure Local sites, the `deploy-azure-local` run prepares a provider handoff. It validates the saved `azure-local` provider configuration, generates deployment artifacts, writes an `azure-local-execution-manifest.json` evidence file, and marks the handoff ready only when required Azure fields and a credential reference are configured. Live Azure mutation remains outside this first handoff stage.
+
 ## Approvals
 
 Protected actions appear in Approvals.
@@ -149,4 +151,3 @@ Audit:
 7. Request/approve protected live action.
 8. Run deployment or lifecycle workflow.
 9. Export job report.
-

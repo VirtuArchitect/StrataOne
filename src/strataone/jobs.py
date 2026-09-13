@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 from strataone.artifacts import ArtifactGenerator
+from strataone.azure_local import AzureLocalExecutionContract
 from strataone.inventory import InventoryReport
 from strataone.orchestrator import Orchestrator
 from strataone.preflight import PreflightRunner
@@ -221,32 +222,25 @@ class JobRunner:
         return {"site_name": spec.site.name, "action": "eject-iso", "nodes": nodes, "execution_mode": mode}
 
     def _deploy_azure_local(self, spec, params: dict[str, Any]) -> dict[str, Any]:
-        if spec.platform.type.value != "azure-local":
-            raise ValueError("deploy-azure-local is only supported for Azure Local sites")
-        stages = [
-            self._stage("validate-prerequisites", "Validate Azure tenant, subscription, resource group, region, and node count", "succeeded"),
-            self._stage("prepare-arc", "Prepare Azure Arc onboarding package and service principal contract", "succeeded"),
-            self._stage("register-nodes", "Register target nodes as Arc-connected machines", "ready"),
-            self._stage("deploy-arm", "Deploy Azure Local resource model through ARM/Bicep desired state", "ready"),
-            self._stage("configure-cluster", "Configure topology, networking, storage, and witness settings", "ready"),
-            self._stage("attach-governance", "Attach Azure Policy, Monitor, Defender, and Update Manager baselines", "ready"),
-        ]
-        for stage in stages:
+        provider_config = self.store.get_provider_config("azure-local")
+        result = AzureLocalExecutionContract().prepare(
+            spec,
+            provider_config.config if provider_config else None,
+            approval_id=params.get("approval_id"),
+        )
+        for stage in result["stages"]:
             self.store.add_job_event(params.get("_job_id", "unknown"), "info", stage["name"], {"status": stage["status"]})
-        return {
-            "site_name": spec.site.name,
-            "action": "deploy-azure-local",
-            "execution_mode": "staged-provider-contract",
-            "approval_id": params.get("approval_id"),
-            "azure": spec.platform.azure.model_dump(mode="json") if spec.platform.azure else {},
-            "stages": stages,
-            "next_actions": [
-                "Confirm provider credentials and Azure permissions.",
-                "Run preflight and resolve warnings.",
-                "Approve live deployment action before provider execution.",
-            ],
-            "note": "Stages are ready for live Azure execution once provider credentials, approvals, and lab validation are configured.",
-        }
+        self.store.add_job_event(
+            params.get("_job_id", "unknown"),
+            "info",
+            "Azure Local provider handoff prepared",
+            {
+                "status": result["status"],
+                "provider_configured": result["provider_configured"],
+                "artifact_count": len(result["artifact_bundle"]["files"]),
+            },
+        )
+        return result
 
     def _drift_detect(self, spec, params: dict[str, Any]) -> dict[str, Any]:
         inventory = self.store.get_inventory(spec.site.name)
