@@ -302,9 +302,12 @@ Current deployment is approval-oriented and staged:
 2. Run inventory and preflight checks.
 3. Generate deployment artifacts.
 4. Optionally run `mount-iso` to prepare Redfish virtual media boot.
-5. Hand off to provider-specific execution gates.
+5. Run `deploy-azure-local` to prepare the Azure Local provider handoff.
+6. Review the generated execution manifest and promote only lab-validated provider adapters to live execution.
 
 The `mount-iso` job defaults to a simulated execution contract. Set `STRATAONE_ENABLE_LIVE_REDFISH=true` to execute Redfish `VirtualMedia.InsertMedia` and one-time CD/DVD boot override calls against discovered BMC endpoints.
+
+The `deploy-azure-local` job validates Azure Local desired-state fields and the saved `azure-local` provider configuration, generates the Azure Local artifact bundle, writes `azure-local-execution-manifest.json`, emits stage events, and returns `ready-for-provider-handoff` only when tenant, subscription, resource group, region, and `credential_ref` are configured. It does not perform live Azure mutations.
 
 Live or materially changing actions are approval-gated when `STRATAONE_REQUIRE_APPROVALS=true`. A request returns an `approval_id`; approve it through `POST /approvals/{approval_id}/approve`, then retry the action with that `approval_id`.
 
@@ -411,7 +414,7 @@ This repository currently contains the first buildable foundation:
 - Azure Local deployment artifact generation
 - Redfish capability checks
 - Redfish virtual-media insert/eject and boot override client operations
-- Azure Local staged deployment execution contract
+- Azure Local provider handoff execution contract with manifest evidence
 - Drift detection and node replacement lifecycle workflows
 - Provider detail and configuration API/dashboard controls
 - Built-in and filesystem provider discovery
@@ -424,7 +427,7 @@ This repository currently contains the first buildable foundation:
 - Example Azure Local branch configuration
 - Unit and integration-style Redfish mock tests
 
-The next implementation milestone is to implement provider-specific Azure Local execution steps behind explicit approval gates and validate each OEM provider in a hardware lab.
+The next implementation milestone is to promote one Azure Local provider handoff stage to a lab-validated live adapter behind explicit approval gates and validate each OEM provider in a hardware lab.
 
 ## Production Readiness Notes
 

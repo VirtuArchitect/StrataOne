@@ -91,6 +91,14 @@ Go to Providers:
 
 Live provider execution should remain disabled until the relevant OEM/platform has validation evidence and approval policy is configured.
 
+For Azure Local handoff readiness, save an `azure-local` provider configuration with:
+
+- `tenant_id`
+- `subscription_id`
+- `resource_group`
+- `region`
+- `credential_ref`
+
 ## 7. Create A Deployment
 
 Go to Deployments or New Deployment:
@@ -102,6 +110,7 @@ Go to Deployments or New Deployment:
 5. Review readiness.
 6. Save deployment.
 7. Run Validate, Inventory, Preflight, Plan, Artifacts.
+8. Run `deploy-azure-local` after approval to produce the provider handoff manifest.
 
 ## 8. Approvals
 

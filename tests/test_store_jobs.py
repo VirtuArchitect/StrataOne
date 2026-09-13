@@ -56,7 +56,51 @@ def test_job_runner_executes_lifecycle_and_azure_local_contracts(tmp_path: Path)
         time.sleep(0.05)
 
     assert store.get_job(drift_id).result["action"] == "drift-detect"
-    assert store.get_job(deploy_id).result["stages"][0]["name"] == "validate-prerequisites"
+    deploy = store.get_job(deploy_id)
+    assert deploy.result["execution_mode"] == "azure-local-provider-handoff"
+    assert deploy.result["status"] == "blocked-missing-provider-config"
+    assert deploy.result["missing_provider_config"] == ["credential_ref"]
+    assert deploy.result["stages"][0]["name"] == "validate-provider-config"
+    assert deploy.result["stages"][0]["status"] == "blocked"
+    assert any(path.endswith("azure-local-execution-manifest.json") for path in deploy.result["artifact_bundle"]["files"])
+
+
+def test_azure_local_contract_is_ready_with_provider_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STRATAONE_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    store = StrataStore(tmp_path / "strataone.db")
+    store.upsert_site(load_site_spec(Path("examples/azure-local-branch.yaml")))
+    store.upsert_provider_config(
+        "azure-local",
+        {
+            "tenant_id": "tenant-001",
+            "subscription_id": "subscription-001",
+            "resource_group": "rg-branch-001",
+            "region": "westeurope",
+            "credential_ref": "azure-local-spn",
+        },
+    )
+    runner = JobRunner(store)
+
+    job_id = runner.submit("branch-001", "deploy-azure-local", {"approval_id": "approval-001"})
+
+    for _ in range(30):
+        job = store.get_job(job_id)
+        if job and job.status == "succeeded":
+            break
+        time.sleep(0.05)
+
+    job = store.get_job(job_id)
+    assert job.status == "succeeded"
+    assert job.result["status"] == "ready-for-provider-handoff"
+    assert job.result["provider_configured"] is True
+    assert job.result["missing_provider_config"] == []
+    assert job.result["azure"]["subscription_id"] == "subscription-001"
+    assert all(stage["status"] in {"succeeded", "ready"} for stage in job.result["stages"])
+    manifest = Path(job.result["artifact_bundle"]["output_dir"]) / "azure-local-execution-manifest.json"
+    assert manifest.exists()
+    assert "azure-local-spn" in manifest.read_text(encoding="utf-8")
+    events = store.list_job_events(job_id)
+    assert any(event.message == "Azure Local provider handoff prepared" for event in events)
 
 
 def test_job_runner_can_leave_jobs_for_durable_worker(tmp_path: Path, monkeypatch) -> None:
